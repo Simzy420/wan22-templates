@@ -19,8 +19,8 @@ let selectedId = null;
 let photoFile = null;
 let photoBlobUrl = null;
 let lastResultUrl = null;
-/** Opaque Gradio session state from Space (optional; Space keeps its own). */
-let sessionState = {};
+/** Session id returned by Space /generate for /extend API calls. */
+let sessionId = "";
 
 const els = {
   rail: document.getElementById("template-rail"),
@@ -232,12 +232,12 @@ els.btnGen.addEventListener("click", async () => {
         sample_shift: 5,
         negative: "",
         seed: 42,
-        state: sessionState || {},
+        session_id: sessionId || "",
       });
-      // result.data is typically [video, download, status, last_frame, state]
+      // result.data: [video, download, status, last_frame, session_id, state?]
       const data = result?.data || result;
       const video = Array.isArray(data) ? data[0] : data;
-      if (Array.isArray(data) && data[4]) sessionState = data[4];
+      if (Array.isArray(data) && data[4]) sessionId = String(data[4]);
       showResult(video);
       els.genStatus.textContent = Array.isArray(data) && data[2] ? String(data[2]).replace(/[*`]/g, "") : "Done.";
     }
@@ -259,6 +259,9 @@ async function extendOnce(auto) {
     const { Client } = await import("@gradio/client");
     const client = await Client.connect(SPACE);
     const api = auto ? "/auto_extend" : "/extend";
+    if (!sessionId) {
+      throw new Error("Missing session_id — generate first in this browser session.");
+    }
     const args = auto
       ? {
           target_seconds: Number(els.extendTarget.value),
@@ -271,7 +274,7 @@ async function extendOnce(auto) {
           quality: 6,
           fps: 16,
           safe_mode: true,
-          state: sessionState || {},
+          session_id: sessionId,
         }
       : {
           prompt: els.prompt.value,
@@ -283,12 +286,12 @@ async function extendOnce(auto) {
           quality: 6,
           fps: 16,
           safe_mode: true,
-          state: sessionState || {},
+          session_id: sessionId,
         };
     const result = await client.predict(api, args);
     const data = result?.data || result;
     const video = Array.isArray(data) ? data[0] : data;
-    if (Array.isArray(data) && data[4]) sessionState = data[4];
+    if (Array.isArray(data) && data[4]) sessionId = String(data[4]);
     showResult(video);
     els.genStatus.textContent = Array.isArray(data) && data[2] ? String(data[2]).replace(/[*`]/g, "") : "Extended.";
   } catch (e) {
