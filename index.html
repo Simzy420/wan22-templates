@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0b0f" />
+    <title>Become the Character</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script src="/config.js"></script>
+  </head>
+  <body>
+    <div id="app">
+      <header class="top">
+        <h1>Become the Character</h1>
+        <p class="sub">Pick a template → upload your still → you’re the star</p>
+      </header>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>Templates</h2>
+          <button type="button" id="btn-refresh" class="ghost">Refresh</button>
+        </div>
+        <div id="template-rail" class="rail" aria-label="Template videos"></div>
+        <p id="templates-status" class="muted">Loading templates…</p>
+      </section>
+
+      <section class="section" id="selected-panel" hidden>
+        <h2>Selected</h2>
+        <div class="card selected-card">
+          <video id="selected-preview" playsinline muted loop controls></video>
+          <div>
+            <h3 id="selected-title">—</h3>
+            <p id="selected-desc" class="muted"></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Your photo</h2>
+        <label class="upload-zone" id="upload-zone">
+          <input type="file" id="photo-input" accept="image/*" hidden />
+          <div class="upload-inner" id="upload-inner">
+            <div class="upload-icon">⬆</div>
+            <strong>Tap to upload a still of yourself</strong>
+            <span class="muted">JPG / PNG · face or full body works best</span>
+          </div>
+          <img id="photo-preview" alt="" hidden />
+        </label>
+      </section>
+
+      <section class="section">
+        <h2>Prompt <span class="muted">(optional)</span></h2>
+        <textarea id="prompt" rows="2" placeholder="a person, natural motion, cinematic…">a person, natural motion, cinematic, high quality</textarea>
+      </section>
+
+      <section class="section actions">
+        <button type="button" id="btn-generate" class="primary" disabled>Generate</button>
+        <p id="gen-status" class="muted"></p>
+      </section>
+
+      <section class="section" id="result-panel" hidden>
+        <h2>Result</h2>
+        <div class="card">
+          <video id="result-video" playsinline controls></video>
+          <div class="row">
+            <a id="btn-download" class="secondary" href="#" download="become-the-character.mp4">Download</a>
+          </div>
+        </div>
+
+        <details class="extend-box">
+          <summary>Extend for a longer clip</summary>
+          <p class="muted">Chains extra I2V segments via the Space (ZeroGPU queue).</p>
+          <label class="field">Target seconds
+            <input type="range" id="extend-target" min="8" max="22" value="12" />
+            <span id="extend-target-val">12s</span>
+          </label>
+          <div class="row">
+            <button type="button" id="btn-extend" class="secondary">Extend once</button>
+            <button type="button" id="btn-auto-extend" class="secondary">Auto-extend</button>
+          </div>
+        </details>
+      </section>
+
+      <footer class="foot muted">
+        Powered by Wan 2.2 on Hugging Face ZeroGPU · demo templates are placeholders
+      </footer>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

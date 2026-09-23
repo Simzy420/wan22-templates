@@ -1,0 +1,18 @@
+{
+  "name": "wan22-templates",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@gradio/client": "^1.15.0",
+    "busboy": "^1.6.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}
