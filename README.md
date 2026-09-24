@@ -58,15 +58,29 @@ Netlify env.
 
 ## Product flow
 
-1. Horizontal rail of short template cards (muted autoplay on hover).
-2. Selected template detail.
+1. Horizontal gallery of catalog clips. Visible and nearby videos autoplay **muted**, **looped**, and **playsInline** (iPhone Safari). Offscreen clips stay unloaded until you scroll near them.
+2. Tap a template. The still upload stays locked until that pick, then the page focuses the upload card.
 3. Dashed upload zone for a still photo.
-4. **Generate** → Space `/generate` (animate).
+4. **Generate** → Space `/generate` (animate). Same arguments as before, including `session_id`.
 5. Result player + download.
-6. Optional Extend / Auto-extend.
+6. Optional Extend / Auto-extend (`/extend`, `/auto_extend`).
+7. **How to use & create templates** opens step-by-step instructions for both flows.
 
-Demo templates in the dataset are **placeholders** (solid color + title). Replace
-them in `Simzy/wan22-template-clips` when real driving videos are ready.
+Templates are the real ~4s clips in `Simzy/wan22-template-clips` (`demo-wave`, `demo-dance`, `demo-victory`, `demo-walk`). Add a new one by putting `templates/<id>.mp4` in that dataset and appending an object to `templates/catalog.json` (about 3–5 seconds, stable id, license in `source`). Then Refresh. This is not a LoRA training upload.
+
+## Hugging Face Space
+
+The live Space (https://huggingface.co/spaces/Simzy/Wan-2.2-templates) is **HF-git only**. It is not deployed from this GitHub repo automatically. `space/app.py` here matches that proxy app, plus the gallery and how-to panel. API routes are unchanged: `/generate`, `/extend`, `/auto_extend`, `/reset`, `/list_templates`.
+
+To update what Casey can open today, push this repo’s `space/` folder to the HF Space repo:
+
+```bash
+git clone https://huggingface.co/spaces/Simzy/Wan-2.2-templates hf-space
+cp space/app.py space/requirements.txt space/README.md hf-space/
+cd hf-space && git add app.py requirements.txt README.md && git commit -m "Autoplay gallery and how-to" && git push
+```
+
+Use a Hugging Face write token. Do not click Generate on the Space while checking the UI — that spends ZeroGPU.
 
 ## Related
 

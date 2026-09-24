@@ -5,3 +5,6 @@ dist/
 .env.*
 !.env.example
 .netlify/
+
+__pycache__/
+*.pyc

@@ -12,35 +12,40 @@
     <div id="app">
       <header class="top">
         <h1>Become the Character</h1>
-        <p class="sub">Pick a template → upload your still → you’re the star</p>
+        <p class="sub">Scroll the motions, pick one, then upload your still</p>
+        <button type="button" id="btn-howto" class="howto-launch" aria-haspopup="dialog" aria-controls="howto-dialog">
+          How to use &amp; create templates
+        </button>
       </header>
 
-      <section class="section">
+      <section class="section" aria-labelledby="motions-heading">
         <div class="section-head">
-          <h2>Templates</h2>
+          <h2 id="motions-heading">Motions</h2>
           <button type="button" id="btn-refresh" class="ghost">Refresh</button>
         </div>
-        <div id="template-rail" class="rail" aria-label="Template videos"></div>
-        <p id="templates-status" class="muted">Loading templates…</p>
+        <p class="muted rail-hint">Swipe sideways. Clips autoplay muted. Tap one to continue.</p>
+        <div id="template-rail" class="rail" role="list" aria-label="Template motions"></div>
+        <p id="templates-status" class="muted" aria-live="polite">Loading templates…</p>
       </section>
 
       <section class="section" id="selected-panel" hidden>
-        <h2>Selected</h2>
+        <h2 class="sr-only">Selected motion</h2>
         <div class="card selected-card">
-          <video id="selected-preview" playsinline muted loop controls></video>
           <div>
+            <p class="eyebrow">Selected motion</p>
             <h3 id="selected-title">—</h3>
             <p id="selected-desc" class="muted"></p>
           </div>
         </div>
       </section>
 
-      <section class="section">
+      <section class="section is-locked" id="upload-section" tabindex="-1" aria-disabled="true">
         <h2>Your photo</h2>
+        <p id="upload-hint" class="muted">Pick a motion above to unlock this step.</p>
         <label class="upload-zone" id="upload-zone">
-          <input type="file" id="photo-input" accept="image/*" hidden />
+          <input type="file" id="photo-input" accept="image/*" hidden disabled />
           <div class="upload-inner" id="upload-inner">
-            <div class="upload-icon">⬆</div>
+            <div class="upload-icon" aria-hidden="true">⬆</div>
             <strong>Tap to upload a still of yourself</strong>
             <span class="muted">JPG / PNG · face or full body works best</span>
           </div>
@@ -55,7 +60,7 @@
 
       <section class="section actions">
         <button type="button" id="btn-generate" class="primary" disabled>Generate</button>
-        <p id="gen-status" class="muted"></p>
+        <p id="gen-status" class="muted" aria-live="polite"></p>
       </section>
 
       <section class="section" id="result-panel" hidden>
@@ -82,9 +87,49 @@
       </section>
 
       <footer class="foot muted">
-        Powered by Wan 2.2 on Hugging Face ZeroGPU · demo templates are placeholders
+        Powered by Wan 2.2 on Hugging Face ZeroGPU · real ~4s motion templates
       </footer>
     </div>
+
+    <dialog id="howto-dialog" class="howto" aria-labelledby="howto-title">
+      <div class="howto-bar">
+        <h2 id="howto-title">How to</h2>
+        <button type="button" id="btn-howto-close" class="ghost">Close</button>
+      </div>
+
+      <h3>Use a template</h3>
+      <ol>
+        <li><strong>Scroll the gallery.</strong> Every template clip autoplays muted, looped, and inline (including iPhone). These are the real driving videos from the catalog.</li>
+        <li><strong>Tap a motion</strong> to select it. Nothing is generated yet.</li>
+        <li><strong>Upload a still</strong> of the person who should become the character (JPG or PNG, face or full body). The upload stays locked until a template is selected.</li>
+        <li>Optionally edit the prompt.</li>
+        <li>Tap <strong>Generate</strong>. Wan Animate runs on ZeroGPU. When the queue is busy this often takes 1–3+ minutes. You get a short clip of that person in the template motion.</li>
+        <li>Optionally <strong>Extend once</strong> or <strong>Auto-extend</strong> for a longer clip. Stay in this browser tab so the session id is kept. Extend chains from the last frame.</li>
+        <li>If you see a rate limit or “failed too many attempts”, wait 10–15 minutes and press Generate once. Each retry uses ZeroGPU quota.</li>
+      </ol>
+
+      <h3>Create a new template</h3>
+      <p>A template is <strong>one short real person-motion driving clip</strong>. This is not a LoRA trainer and does not take a folder of training videos.</p>
+      <ol>
+        <li><strong>Length:</strong> about <strong>3–5 seconds</strong>. Today’s clips (<code>demo-wave</code>, <code>demo-dance</code>, <code>demo-victory</code>, <code>demo-walk</code>) are <strong>4.0s</strong>. Generate uses at most <strong>5 seconds</strong> of the driving video (default <strong>3s</strong>) to spare ZeroGPU quota.</li>
+        <li><strong>Picture:</strong> one person, motion that reads clearly (wave, dance, walk, gesture). MP4, H.264. Prefer a stable camera and a readable face or full body.</li>
+        <li><strong>Id:</strong> lowercase, hyphens, stable once published, for example <code>demo-wave</code>. Do not reuse an existing id unless you mean to replace that motion.</li>
+        <li>
+          <strong>Add it to the dataset</strong>
+          <a href="https://huggingface.co/datasets/Simzy/wan22-template-clips" target="_blank" rel="noreferrer">Simzy/wan22-template-clips</a>
+          on branch <code>main</code>:
+          <ul>
+            <li>File path: <code>templates/&lt;id&gt;.mp4</code></li>
+            <li>Append one object to <code>templates/catalog.json</code> (a JSON array) with <code>id</code>, <code>title</code>, <code>description</code>, <code>video_path</code> (<code>templates/&lt;id&gt;.mp4</code>), <code>duration_s</code>, <code>tags</code>, <code>category</code> (greeting, dance, pose, locomotion, …), <code>thumbnail</code> (null or a path), and <code>source</code> (credit and license).</li>
+          </ul>
+        </li>
+        <li>Keep the existing ids unless you intend to change those motions. Add a new id beside them.</li>
+        <li>Commit to the dataset. This page and the Space both read that catalog. A catalog-only addition does not need an app redeploy.</li>
+        <li>Tap <strong>Refresh</strong> so the new clip shows up in the gallery.</li>
+      </ol>
+      <p class="muted">Clips already in the dataset use the Mixkit Stock Video Free License, except <code>demo-victory</code>, which is from Wan-Video/Wan-Animate-2 <code>examples/demo1/template.mp4</code> (Apache-2.0).</p>
+    </dialog>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
