@@ -9,8 +9,9 @@
  * phone browser never makes a cross-origin Gradio request.
  */
 import { Client } from "@gradio/client";
+import { absolutizeSpaceUrl, DEFAULT_SPACE, rewriteSpaceVideoUrl } from "./videoUrl.js";
 
-export const DEFAULT_SPACE = "https://simzy-wan-2-2-templates.hf.space";
+export { absolutizeSpaceUrl, DEFAULT_SPACE };
 
 const ALLOWED_APIS = new Set(["/generate", "/extend", "/auto_extend"]);
 
@@ -55,25 +56,14 @@ export function fileRefUrl(value) {
   return null;
 }
 
-export function absolutizeSpaceUrl(url, space = DEFAULT_SPACE) {
-  if (typeof url !== "string" || !url) return url;
-  if (/^https?:\/\//.test(url)) return url;
-  const base = String(space || DEFAULT_SPACE).replace(/\/$/, "");
-  if (url.startsWith("file=")) return `${base}/gradio_api/${url}`;
-  if (url.includes("/file=") || url.startsWith("/gradio_api/") || url.startsWith("/file=")) {
-    return url.startsWith("/") ? `${base}${url}` : `${base}/${url}`;
-  }
-  const path = url.startsWith("/") ? url : `/${url}`;
-  return `${base}/gradio_api/file=${path}`;
-}
-
 export function mapPredictResult(result, space = DEFAULT_SPACE) {
   const data = result?.data ?? result;
   const video = Array.isArray(data) ? data[0] : data;
   const status = Array.isArray(data) ? data[2] ?? null : null;
   const sessionId = Array.isArray(data) ? data[4] ?? null : null;
   const rawUrl = fileRefUrl(video);
-  const videoUrl = rawUrl ? absolutizeSpaceUrl(rawUrl, space) : null;
+  const absolute = rawUrl ? absolutizeSpaceUrl(rawUrl, space) : null;
+  const videoUrl = absolute ? rewriteSpaceVideoUrl(absolute, space) : null;
   const session_id =
     sessionId == null || sessionId === "" ? null : String(sessionId);
   return {

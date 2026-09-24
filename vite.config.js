@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import { handleGenerateRequest } from "./server/gradioProxy.js";
+import { handleVideoRequest } from "./server/videoProxy.js";
 
 function webRequest(req, body) {
   const headers = new Headers();
@@ -14,18 +15,20 @@ function webRequest(req, body) {
   return new Request(`http://${req.headers.host || "127.0.0.1"}${req.url}`, init);
 }
 
-/** Mount the same /api/generate handler Vite production uses on Vercel. */
-function apiGenerateDev() {
+/** Mount the same /api/generate and /api/video handlers production uses on Vercel. */
+function apiDev() {
   return {
-    name: "api-generate-dev",
+    name: "api-dev",
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const path = (req.url || "").split("?")[0];
-        if (path !== "/api/generate") return next();
+        if (path !== "/api/generate" && path !== "/api/video") return next();
         try {
           const chunks = [];
           for await (const chunk of req) chunks.push(chunk);
-          const response = await handleGenerateRequest(webRequest(req, Buffer.concat(chunks)));
+          const request = webRequest(req, Buffer.concat(chunks));
+          const response =
+            path === "/api/video" ? await handleVideoRequest(request) : await handleGenerateRequest(request);
           res.statusCode = response.status;
           response.headers.forEach((value, key) => res.setHeader(key, value));
           res.end(Buffer.from(await response.arrayBuffer()));
@@ -42,7 +45,7 @@ function apiGenerateDev() {
 export default defineConfig({
   root: ".",
   publicDir: "public",
-  plugins: [apiGenerateDev()],
+  plugins: [apiDev()],
   build: {
     outDir: "dist",
     emptyOutDir: true,

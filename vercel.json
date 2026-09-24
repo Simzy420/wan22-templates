@@ -7,6 +7,9 @@
     "api/generate.js": {
       "maxDuration": 300,
       "includeFiles": "node_modules/@gradio/client/dist/**"
+    },
+    "api/video.js": {
+      "maxDuration": 60
     }
   }
 }
