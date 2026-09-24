@@ -5,6 +5,7 @@ window.CONFIG = {
     "https://huggingface.co/datasets/Simzy/wan22-template-clips/resolve/main/templates/catalog.json",
   DATASET_CDN_BASE:
     "https://huggingface.co/datasets/Simzy/wan22-template-clips/resolve/main/",
-  // Prefer direct @gradio/client; Netlify function is fallback if CORS blocks.
-  USE_PROXY: false,
+  // Phone Safari blocks direct @gradio/client calls to the Space ("Load failed").
+  // true posts Generate / Extend / Auto-extend to same-origin /api/generate.
+  USE_PROXY: true,
 };
