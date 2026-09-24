@@ -1,2 +1,8 @@
-gradio>=4.44.0
-spaces
+gradio>=5.49.1
+gradio_client>=1.0.0
+huggingface_hub>=0.26.0
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+imageio>=2.31.0
+imageio-ffmpeg>=0.4.9

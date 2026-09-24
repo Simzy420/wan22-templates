@@ -27,9 +27,10 @@ const els = {
   status: document.getElementById("templates-status"),
   refresh: document.getElementById("btn-refresh"),
   selectedPanel: document.getElementById("selected-panel"),
-  selectedPreview: document.getElementById("selected-preview"),
   selectedTitle: document.getElementById("selected-title"),
   selectedDesc: document.getElementById("selected-desc"),
+  uploadSection: document.getElementById("upload-section"),
+  uploadHint: document.getElementById("upload-hint"),
   uploadZone: document.getElementById("upload-zone"),
   uploadInner: document.getElementById("upload-inner"),
   photoInput: document.getElementById("photo-input"),
@@ -44,7 +45,13 @@ const els = {
   btnAuto: document.getElementById("btn-auto-extend"),
   extendTarget: document.getElementById("extend-target"),
   extendTargetVal: document.getElementById("extend-target-val"),
+  howtoBtn: document.getElementById("btn-howto"),
+  howtoDialog: document.getElementById("howto-dialog"),
+  howtoClose: document.getElementById("btn-howto-close"),
 };
+
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let playObserver = null;
 
 function videoUrl(t) {
   if (t.video_url) return t.video_url;
@@ -56,6 +63,74 @@ function updateGenerateEnabled() {
   els.btnGen.disabled = !(selectedId && photoFile);
 }
 
+function armVideo(vid) {
+  vid.muted = true;
+  vid.defaultMuted = true;
+  vid.loop = true;
+  vid.playsInline = true;
+  vid.autoplay = true;
+  vid.setAttribute("muted", "");
+  vid.setAttribute("playsinline", "");
+  vid.setAttribute("webkit-playsinline", "");
+  if (!vid.getAttribute("src") && vid.dataset.src) vid.src = vid.dataset.src;
+}
+
+function visibleRatio(el) {
+  const rect = el.getBoundingClientRect();
+  const vw = window.innerWidth || document.documentElement.clientWidth;
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+  if (rect.width <= 0 || rect.height <= 0) return 0;
+  const w = Math.min(rect.right, vw) - Math.max(rect.left, 0);
+  const h = Math.min(rect.bottom, vh) - Math.max(rect.top, 0);
+  return (Math.max(0, w) / rect.width) * (Math.max(0, h) / rect.height);
+}
+
+function syncPlayback() {
+  els.rail.querySelectorAll("video").forEach((vid) => {
+    const selected = vid.closest(".tcard")?.classList.contains("active");
+    const ratio = visibleRatio(vid);
+    const shouldPlay = !reduceMotion && (ratio >= 0.12 || (selected && ratio > 0.02));
+    if (shouldPlay) {
+      armVideo(vid);
+      vid.play().catch(() => {
+        vid.controls = true;
+      });
+    } else {
+      vid.pause();
+    }
+  });
+}
+
+function observeRail() {
+  if (playObserver) playObserver.disconnect();
+  playObserver = new IntersectionObserver(() => syncPlayback(), {
+    root: null,
+    rootMargin: "80px 120px",
+    threshold: [0, 0.15, 0.4, 0.75],
+  });
+  els.rail.querySelectorAll("video").forEach((vid) => playObserver.observe(vid));
+  syncPlayback();
+}
+
+function lockUpload() {
+  els.uploadSection.classList.add("is-locked");
+  els.uploadSection.classList.remove("is-ready");
+  els.uploadSection.setAttribute("aria-disabled", "true");
+  els.photoInput.disabled = true;
+  els.uploadHint.textContent = "Pick a motion above to unlock this step.";
+  els.selectedPanel.hidden = true;
+}
+
+function focusUpload() {
+  els.uploadSection.classList.remove("is-locked");
+  els.uploadSection.classList.add("is-ready");
+  els.uploadSection.setAttribute("aria-disabled", "false");
+  els.photoInput.disabled = false;
+  els.uploadHint.textContent = "Upload a still of the person who should do this motion.";
+  els.uploadSection.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+  els.uploadSection.focus({ preventScroll: true });
+}
+
 async function loadCatalog() {
   els.status.textContent = "Loading templates…";
   els.rail.innerHTML = "";
@@ -65,33 +140,38 @@ async function loadCatalog() {
     templates = await res.json();
     if (!Array.isArray(templates) || !templates.length) {
       els.status.textContent = "No templates in catalog yet.";
+      lockUpload();
       return;
     }
-    els.status.textContent = `${templates.length} templates · demos are placeholders`;
-    for (const t of templates) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "tcard" + (t.id === selectedId ? " active" : "");
-      btn.dataset.id = t.id;
-      const url = videoUrl(t);
-      btn.innerHTML = `
-        <video muted loop playsinline preload="metadata" src="${url}"></video>
-        <div class="meta">
-          <strong>${escapeHtml(t.title || t.id)}</strong>
-          <span>~${t.duration_s ?? "?"}s · ${escapeHtml(t.category || "demo")}</span>
-        </div>`;
-      const vid = btn.querySelector("video");
-      btn.addEventListener("mouseenter", () => vid && vid.play().catch(() => {}));
-      btn.addEventListener("mouseleave", () => {
-        if (vid) {
-          vid.pause();
-          vid.currentTime = 0;
-        }
-      });
-      btn.addEventListener("click", () => selectTemplate(t.id));
-      els.rail.appendChild(btn);
+    if (selectedId && !templates.some((t) => t.id === selectedId)) {
+      selectedId = null;
+      lockUpload();
     }
-    if (!selectedId && templates[0]) selectTemplate(templates[0].id);
+    els.status.textContent = `${templates.length} motions · swipe to see them all`;
+    for (const t of templates) {
+      const card = document.createElement("article");
+      card.className = "tcard" + (t.id === selectedId ? " active" : "");
+      card.dataset.id = t.id;
+      card.setAttribute("role", "listitem");
+      const url = videoUrl(t);
+      const title = t.title || t.id;
+      const dur = t.duration_s ?? "?";
+      card.innerHTML = `
+        <div class="tcard-media">
+          <video muted loop playsinline webkit-playsinline autoplay preload="none" data-src="${escapeHtml(url)}" aria-label="${escapeHtml(title)}"></video>
+        </div>
+        <div class="meta">
+          <strong>${escapeHtml(title)}</strong>
+          <span>~${escapeHtml(dur)}s · ${escapeHtml(t.category || "motion")}</span>
+        </div>
+        <button type="button" class="tcard-hit" aria-pressed="${t.id === selectedId ? "true" : "false"}" aria-label="Select ${escapeHtml(title)}">
+          <span class="tcard-cta">${t.id === selectedId ? "Selected" : "Select"}</span>
+        </button>`;
+      card.querySelector(".tcard-hit").addEventListener("click", () => selectTemplate(t.id));
+      els.rail.appendChild(card);
+    }
+    observeRail();
+    if (selectedId) selectTemplate(selectedId, { scrollUpload: false });
   } catch (e) {
     console.error(e);
     els.status.textContent = `Could not load catalog: ${e.message}`;
@@ -106,24 +186,39 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
-function selectTemplate(id) {
+function selectTemplate(id, opts = {}) {
+  const scrollUpload = opts.scrollUpload !== false;
   selectedId = id;
   const t = templates.find((x) => x.id === id);
   document.querySelectorAll(".tcard").forEach((el) => {
-    el.classList.toggle("active", el.dataset.id === id);
+    const on = el.dataset.id === id;
+    el.classList.toggle("active", on);
+    const hit = el.querySelector(".tcard-hit");
+    if (hit) {
+      hit.setAttribute("aria-pressed", on ? "true" : "false");
+      const cta = hit.querySelector(".tcard-cta");
+      if (cta) cta.textContent = on ? "Selected" : "Select";
+    }
+    if (on && scrollUpload) {
+      const left = el.offsetLeft - (els.rail.clientWidth - el.clientWidth) / 2;
+      els.rail.scrollTo({ left: Math.max(0, left), behavior: reduceMotion ? "auto" : "smooth" });
+    }
   });
-  if (!t) return;
+  if (!t) {
+    lockUpload();
+    updateGenerateEnabled();
+    return;
+  }
   els.selectedPanel.hidden = false;
   els.selectedTitle.textContent = t.title || t.id;
   els.selectedDesc.textContent = t.description || "";
-  const url = videoUrl(t);
-  els.selectedPreview.src = url;
-  els.selectedPreview.muted = true;
-  els.selectedPreview.play().catch(() => {});
+  syncPlayback();
   updateGenerateEnabled();
+  if (scrollUpload) focusUpload();
 }
 
 function setPhoto(file) {
+  if (!selectedId || els.photoInput.disabled) return;
   if (!file || !file.type.startsWith("image/")) return;
   photoFile = file;
   if (photoBlobUrl) URL.revokeObjectURL(photoBlobUrl);
@@ -139,11 +234,13 @@ els.photoInput.addEventListener("change", () => {
   if (f) setPhoto(f);
 });
 els.uploadZone.addEventListener("dragover", (e) => {
+  if (!selectedId) return;
   e.preventDefault();
   els.uploadZone.classList.add("drag");
 });
 els.uploadZone.addEventListener("dragleave", () => els.uploadZone.classList.remove("drag"));
 els.uploadZone.addEventListener("drop", (e) => {
+  if (!selectedId) return;
   e.preventDefault();
   els.uploadZone.classList.remove("drag");
   const f = e.dataTransfer.files && e.dataTransfer.files[0];
@@ -151,6 +248,24 @@ els.uploadZone.addEventListener("drop", (e) => {
 });
 
 els.refresh.addEventListener("click", () => loadCatalog());
+window.addEventListener("scroll", syncPlayback, { passive: true });
+window.addEventListener("resize", syncPlayback);
+els.rail.addEventListener("scroll", syncPlayback, { passive: true });
+
+function openHowto() {
+  if (typeof els.howtoDialog.showModal === "function") els.howtoDialog.showModal();
+  else els.howtoDialog.setAttribute("open", "");
+}
+function closeHowto() {
+  if (typeof els.howtoDialog.close === "function") els.howtoDialog.close();
+  else els.howtoDialog.removeAttribute("open");
+  els.howtoBtn.focus();
+}
+els.howtoBtn.addEventListener("click", openHowto);
+els.howtoClose.addEventListener("click", closeHowto);
+els.howtoDialog.addEventListener("click", (e) => {
+  if (e.target === els.howtoDialog) closeHowto();
+});
 els.extendTarget.addEventListener("input", () => {
   els.extendTargetVal.textContent = `${els.extendTarget.value}s`;
 });
