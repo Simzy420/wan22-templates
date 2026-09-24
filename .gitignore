@@ -5,6 +5,7 @@ dist/
 .env.*
 !.env.example
 .netlify/
+.vercel/
 
 __pycache__/
 *.pyc

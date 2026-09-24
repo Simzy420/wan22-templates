@@ -1,6 +1,7 @@
 /**
- * Become the Character — Netlify / Vite UI
- * Templates from HF dataset CDN; generate via Gradio Space API.
+ * Become the Character — Vercel / Vite UI
+ * Templates from HF dataset CDN. Generate and extend go through
+ * same-origin /api/generate when USE_PROXY is true (required on iPhone).
  */
 
 const cfg = window.CONFIG || {};
@@ -286,79 +287,139 @@ function clearBusy() {
 function showResult(fileOrUrl) {
   let url = fileOrUrl;
   if (fileOrUrl && typeof fileOrUrl === "object") {
-    url = fileOrUrl.url || fileOrUrl.path || fileOrUrl;
+    const nested = fileOrUrl.video && typeof fileOrUrl.video === "object" ? fileOrUrl.video : null;
+    url = (nested && (nested.url || nested.path)) || fileOrUrl.url || fileOrUrl.path || fileOrUrl;
   }
-  if (!url) throw new Error("No video returned");
-  lastResultUrl = typeof url === "string" ? url : String(url);
+  if (!url || typeof url !== "string") throw new Error("No video returned");
+  lastResultUrl = url;
   els.resultPanel.hidden = false;
   els.resultVideo.src = lastResultUrl;
   els.resultVideo.play().catch(() => {});
   els.btnDownload.href = lastResultUrl;
 }
 
-/** Call Space via @gradio/client, or Netlify proxy if USE_PROXY. */
-async function callSpace(apiName, payload) {
-  if (USE_PROXY) {
-    const form = new FormData();
-    form.append("api", apiName);
-    form.append("payload", JSON.stringify(payload.json || {}));
-    if (payload.photo) form.append("photo", payload.photo, payload.photo.name || "photo.jpg");
-    const res = await fetch("/api/generate", { method: "POST", body: form });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(text || `Proxy HTTP ${res.status}`);
-    }
-    return res.json();
-  }
+function statusText(value, fallback) {
+  if (value == null || value === "") return fallback;
+  return String(value).replace(/[*`]/g, "");
+}
 
-  const { Client } = await import("@gradio/client");
-  const client = await Client.connect(SPACE);
-  const result = await client.predict(apiName, payload.args);
-  return result;
+function rememberSession(data) {
+  if (!data) return;
+  if (Array.isArray(data) && data[4]) {
+    sessionId = String(data[4]);
+    return;
+  }
+  const sid = data.session_id || (typeof data.state === "string" ? data.state : "");
+  if (sid) sessionId = String(sid);
+}
+
+/** Vercel/Netlify request bodies are about 4.5 MB. Shrink large phone stills. */
+async function photoForUpload(file) {
+  const limit = 3.5 * 1024 * 1024;
+  if (!file || file.size <= limit) return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const maxEdge = 1280;
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, width, height);
+    if (typeof bitmap.close === "function") bitmap.close();
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.82));
+    if (!blob) return file;
+    return new File([blob], "photo.jpg", { type: "image/jpeg" });
+  } catch {
+    return file;
+  }
+}
+
+function generateArgs() {
+  return {
+    template_id: selectedId,
+    prompt: els.prompt.value || "a person, natural motion, cinematic, high quality",
+    max_seconds: 3,
+    height: 480,
+    width: 384,
+    steps: 6,
+    guidance: 1,
+    sample_shift: 5,
+    negative: "",
+    seed: 42,
+    session_id: sessionId || "",
+  };
+}
+
+function extendArgs(auto) {
+  const args = {
+    prompt: els.prompt.value,
+    seg_duration: 3.5,
+    steps: 4,
+    negative: "",
+    seed: 42,
+    randomize: true,
+    quality: 6,
+    fps: 16,
+    safe_mode: true,
+    session_id: sessionId,
+  };
+  if (auto) args.target_seconds = Number(els.extendTarget.value);
+  return args;
+}
+
+/** Same-origin proxy. Used for generate, extend, and auto_extend when USE_PROXY is true. */
+async function callSpace(apiName, payload) {
+  const form = new FormData();
+  form.append("api", apiName);
+  form.append("payload", JSON.stringify(payload.json || {}));
+  if (payload.photo) {
+    const photo = await photoForUpload(payload.photo);
+    form.append("photo", photo, photo.name || "photo.jpg");
+  }
+  const res = await fetch("/api/generate", { method: "POST", body: form });
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  if (!res.ok) {
+    throw new Error((data && data.error) || text || `Proxy HTTP ${res.status}`);
+  }
+  if (!data) throw new Error("Proxy returned an empty response");
+  return data;
 }
 
 els.btnGen.addEventListener("click", async () => {
   if (!selectedId || !photoFile) return;
   setBusy("Queuing on ZeroGPU… this can take 1–3+ minutes when busy.");
   try {
+    const args = generateArgs();
     if (USE_PROXY) {
-      const data = await callSpace("/generate", {
-        json: {
-          template_id: selectedId,
-          prompt: els.prompt.value,
-        },
-        photo: photoFile,
-      });
+      const data = await callSpace("/generate", { json: args, photo: photoFile });
+      rememberSession(data);
       showResult(data.video || data.url);
-      if (data.state) sessionState = data.state;
+      els.genStatus.textContent = statusText(data.status, "Done.");
     } else {
-      const { Client, handle_file } = await import("@gradio/client");
-      // handle_file may not exist in browser build — pass File / Blob directly
+      const { Client } = await import("@gradio/client");
       const client = await Client.connect(SPACE);
-      const result = await client.predict("/generate", {
-        template_id: selectedId,
-        image: photoFile,
-        prompt: els.prompt.value || "a person, natural motion, cinematic, high quality",
-        max_seconds: 3,
-        height: 480,
-        width: 384,
-        steps: 6,
-        guidance: 1,
-        sample_shift: 5,
-        negative: "",
-        seed: 42,
-        session_id: sessionId || "",
-      });
-      // result.data: [video, download, status, last_frame, session_id, state?]
+      const result = await client.predict("/generate", { ...args, image: photoFile });
+      // result.data: [video, download, status, last_frame, session_id]
       const data = result?.data || result;
       const video = Array.isArray(data) ? data[0] : data;
-      if (Array.isArray(data) && data[4]) sessionId = String(data[4]);
+      rememberSession(data);
       showResult(video);
-      els.genStatus.textContent = Array.isArray(data) && data[2] ? String(data[2]).replace(/[*`]/g, "") : "Done.";
+      els.genStatus.textContent = statusText(Array.isArray(data) ? data[2] : null, "Done.");
     }
   } catch (e) {
     console.error(e);
-    els.genStatus.textContent = `Generate failed: ${e.message || e}. If CORS blocked, set window.CONFIG.USE_PROXY = true and redeploy.`;
+    const hint = USE_PROXY
+      ? ""
+      : " If CORS blocked, set window.CONFIG.USE_PROXY = true and redeploy.";
+    els.genStatus.textContent = `Generate failed: ${e.message || e}.${hint}`;
   } finally {
     clearBusy();
   }
@@ -371,44 +432,26 @@ async function extendOnce(auto) {
   }
   setBusy(auto ? "Auto-extending (multiple ZeroGPU calls)…" : "Extending…");
   try {
-    const { Client } = await import("@gradio/client");
-    const client = await Client.connect(SPACE);
     const api = auto ? "/auto_extend" : "/extend";
     if (!sessionId) {
       throw new Error("Missing session_id — generate first in this browser session.");
     }
-    const args = auto
-      ? {
-          target_seconds: Number(els.extendTarget.value),
-          prompt: els.prompt.value,
-          seg_duration: 3.5,
-          steps: 4,
-          negative: "",
-          seed: 42,
-          randomize: true,
-          quality: 6,
-          fps: 16,
-          safe_mode: true,
-          session_id: sessionId,
-        }
-      : {
-          prompt: els.prompt.value,
-          seg_duration: 3.5,
-          steps: 4,
-          negative: "",
-          seed: 42,
-          randomize: true,
-          quality: 6,
-          fps: 16,
-          safe_mode: true,
-          session_id: sessionId,
-        };
-    const result = await client.predict(api, args);
-    const data = result?.data || result;
-    const video = Array.isArray(data) ? data[0] : data;
-    if (Array.isArray(data) && data[4]) sessionId = String(data[4]);
-    showResult(video);
-    els.genStatus.textContent = Array.isArray(data) && data[2] ? String(data[2]).replace(/[*`]/g, "") : "Extended.";
+    const args = extendArgs(auto);
+    if (USE_PROXY) {
+      const data = await callSpace(api, { json: args });
+      rememberSession(data);
+      showResult(data.video || data.url);
+      els.genStatus.textContent = statusText(data.status, "Extended.");
+    } else {
+      const { Client } = await import("@gradio/client");
+      const client = await Client.connect(SPACE);
+      const result = await client.predict(api, args);
+      const data = result?.data || result;
+      const video = Array.isArray(data) ? data[0] : data;
+      rememberSession(data);
+      showResult(video);
+      els.genStatus.textContent = statusText(Array.isArray(data) ? data[2] : null, "Extended.");
+    }
   } catch (e) {
     console.error(e);
     els.genStatus.textContent = `Extend failed: ${e.message || e}`;
