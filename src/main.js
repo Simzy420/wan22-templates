@@ -2,7 +2,9 @@
  * Become the Character — Vercel / Vite UI
  * Templates from HF dataset CDN. Generate and extend go through
  * same-origin /api/generate when USE_PROXY is true (required on iPhone).
+ * Result video URLs on the Space host are rewritten to /api/video.
  */
+import { rewriteSpaceVideoUrl } from "../server/videoUrl.js";
 
 const cfg = window.CONFIG || {};
 const SPACE = import.meta.env.VITE_HF_SPACE || cfg.HF_SPACE || "https://simzy-wan-2-2-templates.hf.space";
@@ -291,6 +293,7 @@ function showResult(fileOrUrl) {
     url = (nested && (nested.url || nested.path)) || fileOrUrl.url || fileOrUrl.path || fileOrUrl;
   }
   if (!url || typeof url !== "string") throw new Error("No video returned");
+  url = rewriteSpaceVideoUrl(url, SPACE);
   lastResultUrl = url;
   els.resultPanel.hidden = false;
   els.resultVideo.src = lastResultUrl;

@@ -29,6 +29,15 @@ server.
 `USE_PROXY` must stay **`true`** for browser CORS. `false` makes the phone UI
 call `https://simzy-wan-2-2-templates.hf.space` directly and Safari fails again.
 
+The result file still lives on the Space. Safari often shows a broken player
+(duration 00:00, blurry frames) when `<video>` loads that host directly.
+`/api/generate` rewrites `video` and `url` to same-origin
+`/api/video?url=...`, and the page does the same rewrite if a Space URL
+slips through. `/api/video` streams the bytes and forwards `Range`.
+
+After this deploys, hard-close the phone tab, open the site again, then
+Generate. Do not keep the old tab.
+
 ## Deploy on Vercel
 
 Production is the Vercel project **`wan22-templates`**, linked to GitHub

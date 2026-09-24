@@ -585,10 +585,15 @@ def call_wan_i2v(
 
 def status_line(segments: list[str], duration_est: float) -> str:
     n = len(segments)
+    # HF_TOKEN / HUGGING_FACE_HUB_TOKEN is the Space secret (Pro quota when eligible).
+    if _hf_token():
+        quota = "ZeroGPU — authenticated (HF Pro quota when eligible)"
+    else:
+        quota = "ZeroGPU — public queue (set Space secret HF_TOKEN for Pro quota)"
     return (
         f"**Segments:** {n}  ·  **Duration ≈ {duration_est:.1f}s**  ·  "
         f"Animate: `{ANIMATE_SPACE}` · Extend: `{EXTEND_SPACE}` "
-        f"(ZeroGPU — free, queued/quota-limited)"
+        f"({quota})"
     )
 
 
@@ -1125,6 +1130,10 @@ def build_ui():
         head=GALLERY_HEAD,
         theme=gr.themes.Soft(primary_hue="purple", secondary_hue="pink", neutral_hue="zinc"),
     ) as demo:
+        if _hf_token():
+            quota_banner = "ZeroGPU — authenticated (HF Pro quota when eligible)."
+        else:
+            quota_banner = "ZeroGPU — public queue (set Space secret HF_TOKEN for Pro quota)."
         gr.Markdown(
             f"""
 # Become the Character
@@ -1132,7 +1141,7 @@ Scroll the motions, pick one, then upload a still. Generate puts you in that cli
 
 Templates are real ~4s human-motion videos from [`{TEMPLATE_DATASET}`](https://huggingface.co/datasets/{TEMPLATE_DATASET}).
 
-**ZeroGPU is free but queued / quota-limited.** On 429 or “failed too many attempts”, wait 10–15 minutes and press Generate **once**.
+**{quota_banner}** On 429 or “failed too many attempts”, wait 10–15 minutes and press Generate **once**.
             """
         )
         howto_open = gr.State(False)

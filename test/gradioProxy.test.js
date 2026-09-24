@@ -35,22 +35,37 @@ function mockConnect(calls) {
   });
 }
 
+function proxied(spaceFileUrl) {
+  return `/api/video?url=${encodeURIComponent(spaceFileUrl)}`;
+}
+
 describe("gradio proxy mapping", () => {
   it("unwraps Gradio video data and the session id at index 4", () => {
     const mapped = mapPredictResult(fakeResult("abc"), SPACE);
-    assert.equal(mapped.video, `${SPACE}/gradio_api/file=/tmp/out.mp4`);
+    const spaceFile = `${SPACE}/gradio_api/file=/tmp/out.mp4`;
+    assert.equal(mapped.video, proxied(spaceFile));
     assert.equal(mapped.url, mapped.video);
     assert.equal(mapped.session_id, "abc");
     assert.equal(mapped.state, "abc");
     assert.match(mapped.status, /Segments/);
   });
 
-  it("keeps absolute file urls", () => {
+  it("keeps absolute file urls that are not on the Space", () => {
     const mapped = mapPredictResult(
       { data: [{ url: "https://cdn.example/a.mp4" }, null, "ok", null, "s"] },
       SPACE
     );
     assert.equal(mapped.video, "https://cdn.example/a.mp4");
+    assert.equal(mapped.session_id, "s");
+  });
+
+  it("rewrites an absolute Space file url to /api/video and keeps session_id", () => {
+    const spaceFile = `${SPACE}/file=/tmp/gradio/out.mp4`;
+    const mapped = mapPredictResult({ data: [{ url: spaceFile }, null, "ok", null, "sess-keep"] }, SPACE);
+    assert.equal(mapped.video, proxied(spaceFile));
+    assert.equal(mapped.url, mapped.video);
+    assert.equal(mapped.session_id, "sess-keep");
+    assert.equal(mapped.state, "sess-keep");
   });
 
   it("builds a file url from a server path", () => {
@@ -104,7 +119,8 @@ describe("handleGenerateRequest", () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.session_id, "sess-9");
-    assert.equal(body.video, `${SPACE}/gradio_api/file=/tmp/out.mp4`);
+    assert.equal(body.video, proxied(`${SPACE}/gradio_api/file=/tmp/out.mp4`));
+    assert.equal(body.url, body.video);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].api, "/generate");
     assert.equal(calls[0].args.template_id, "demo-wave");
@@ -129,6 +145,9 @@ describe("handleGenerateRequest", () => {
         { connect: mockConnect(calls), env: {} }
       );
       assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.session_id, "sess-9");
+      assert.equal(body.video, proxied(`${SPACE}/gradio_api/file=/tmp/out.mp4`));
       assert.equal(calls[0].api, api);
       assert.equal(calls[0].args.session_id, "sess-9");
       assert.equal("image" in calls[0].args, false);
@@ -204,6 +223,7 @@ describe("platform entrypoints", () => {
     assert.equal(result.statusCode, 200);
     const body = JSON.parse(result.body);
     assert.equal(body.session_id, "sess-9");
+    assert.equal(body.video, proxied(`${SPACE}/gradio_api/file=/tmp/out.mp4`));
     assert.equal(calls[0].api, "/generate");
     assert.equal(calls[0].args.template_id, "demo-dance");
     assert.equal(calls[0].args.session_id, "keep");
@@ -226,6 +246,7 @@ describe("phone UI wiring", () => {
     assert.match(main, /callSpace\(api,\s*\{\s*json:\s*args\s*\}\)/);
     assert.match(main, /callSpace\("\/generate"/);
     assert.equal(vercel.functions["api/generate.js"].maxDuration, 300);
+    assert.equal(vercel.functions["api/video.js"].maxDuration, 60);
     assert.match(vercel.functions["api/generate.js"].includeFiles, /@gradio\/client\/dist/);
     assert.equal(vercel.outputDirectory, "dist");
     assert.equal(vercel.framework, "vite");
