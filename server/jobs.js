@@ -117,6 +117,17 @@ function blobAdapter(store) {
   };
 }
 
+/**
+ * Site settings (RUNPOD_API_KEY, RUNPOD_ENDPOINT_ID, URL) are on process.env
+ * in the deployed function. NETLIFY=true is build-only and is not set there.
+ * A partial context.env must not hide those site variables.
+ */
+export function netlifyFunctionEnv(context, base = process.env) {
+  const extra = context && context.env && typeof context.env === "object" ? context.env : null;
+  if (!extra) return base;
+  return { ...base, ...extra };
+}
+
 export function publicJob(record) {
   if (!record) return null;
   if (record.phase === "done" && record.result) {
@@ -247,6 +258,24 @@ export async function enqueueGenerateJob(job, deps = {}) {
   return { job_id, phase: "queued" };
 }
 
+async function runPreparedRunpodGenerate(spec, deps, env, store) {
+  if (!spec.image_base64) {
+    throw new Error(
+      spec.backend === "runpod"
+        ? "The still photo was empty."
+        : "Generate uses Runpod, but this job was not prepared for it. Try Generate again."
+    );
+  }
+  return runRunpodGenerate(spec, {
+    store,
+    env,
+    fetch: deps.fetch,
+    timeoutMs: deps.timeoutMs ?? 14 * 60 * 1000,
+    intervalMs: deps.intervalMs,
+    sleep: deps.sleep,
+  });
+}
+
 export async function runBackgroundJob(spec, deps = {}) {
   if (!spec || !spec.job_id) throw new Error("Missing job_id");
   const store = deps.store;
@@ -256,25 +285,21 @@ export async function runBackgroundJob(spec, deps = {}) {
     return publicJob(existing);
   }
   await store.setJSON(spec.job_id, { id: spec.job_id, phase: "running" });
+  const env = deps.env || process.env;
   try {
-    const result =
-      spec.backend === "runpod"
-        ? await runRunpodGenerate(spec, {
-            store,
-            env: deps.env || process.env,
-            fetch: deps.fetch,
-            timeoutMs: deps.timeoutMs ?? 14 * 60 * 1000,
-            intervalMs: deps.intervalMs,
-            sleep: deps.sleep,
-          })
-        : await callSpaceApi({
-            api: spec.api,
-            payload: spec.payload,
-            photo: spec.image || null,
-            env: deps.env || process.env,
-            connect: deps.connect,
-            timeoutMs: deps.timeoutMs ?? 14 * 60 * 1000,
-          });
+    // Generate uses Runpod whenever the endpoint is configured, including a
+    // spec that was labeled "hf". Extend still calls the Space.
+    const generateOnRunpod = spec.api === "/generate" && (spec.backend === "runpod" || runpodConfigured(env));
+    const result = generateOnRunpod
+      ? await runPreparedRunpodGenerate(spec, deps, env, store)
+      : await callSpaceApi({
+          api: spec.api,
+          payload: spec.payload,
+          photo: spec.image || null,
+          env,
+          connect: deps.connect,
+          timeoutMs: deps.timeoutMs ?? 14 * 60 * 1000,
+        });
     const record = { id: spec.job_id, phase: "done", result };
     await store.setJSON(spec.job_id, record);
     return publicJob(record);

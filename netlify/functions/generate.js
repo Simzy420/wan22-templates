@@ -6,6 +6,10 @@
  * generate-background.js. That worker polls Runpod when RUNPOD_API_KEY and
  * RUNPOD_ENDPOINT_ID are set. Poll GET /api/job?id= and play GET /api/result.
  *
+ * Always queue. Do not gate on process.env.NETLIFY: that variable is set
+ * during the build and is absent in the deployed function, which previously
+ * fell through to the Space and rejected video_url.
+ *
  * A missing still is a JSON 400. Runpod and Gradio failures are JSON too —
  * the function must not exit 1.
  *
@@ -18,7 +22,7 @@
  *   URL                  set by Netlify; used to start the background worker
  */
 import { handleGenerateRequest, errorMessage } from "../../server/gradioProxy.js";
-import { enqueueGenerateJob } from "../../server/jobs.js";
+import { enqueueGenerateJob, netlifyFunctionEnv } from "../../server/jobs.js";
 
 function jsonResult(statusCode, body) {
   return {
@@ -48,23 +52,24 @@ function eventToRequest(event) {
   return new Request("https://proxy.local/api/generate", init);
 }
 
-function isNetlifyRuntime() {
-  const flag = process.env.NETLIFY;
-  return flag === "true" || flag === "1";
-}
-
 export async function handler(event, context) {
   if (context) context.callbackWaitsForEmptyEventLoop = false;
   try {
     const request = eventToRequest(event);
-    const deps = {};
-    if (context && typeof context.connect === "function") deps.connect = context.connect;
-    if (context && context.env) deps.env = context.env;
+    const env = netlifyFunctionEnv(context);
+    const deps = { env };
     if (context && typeof context.enqueue === "function") {
       deps.enqueue = context.enqueue;
-    } else if (!deps.connect && isNetlifyRuntime()) {
-      const env = deps.env || process.env;
-      deps.enqueue = (job) => enqueueGenerateJob(job, { event, env });
+    } else {
+      deps.enqueue = (job) =>
+        enqueueGenerateJob(job, {
+          event,
+          env,
+          store: context?.store,
+          kick: context?.kick,
+          fetch: context?.fetch,
+          upload: context?.upload,
+        });
     }
     const response = await handleGenerateRequest(request, deps);
     const text = await response.text();

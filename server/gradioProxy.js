@@ -10,6 +10,7 @@
  */
 import { publicErrorText } from "./gatewayError.js";
 import { createGradioHttpClient } from "./gradioHttp.js";
+import { runpodConfigured } from "./runpod.js";
 import { absolutizeSpaceUrl, DEFAULT_SPACE, rewriteSpaceVideoUrl } from "./videoUrl.js";
 
 // The old Gradio JS client rejected inside an async Promise executor, and Node
@@ -43,12 +44,60 @@ export function normalizeApi(api) {
   return withSlash;
 }
 
-export function buildPredictArgs(payload, photo) {
+// Public Gradio kwargs only. gr.State, gr.Request, and gr.Progress are not
+// client keywords. video_url is for Runpod, and positionalArgs rejects it.
+const PREDICT_KEYS = {
+  "/generate": [
+    "template_id",
+    "image",
+    "prompt",
+    "max_seconds",
+    "height",
+    "width",
+    "steps",
+    "guidance",
+    "sample_shift",
+    "negative",
+    "seed",
+    "session_id",
+  ],
+  "/extend": [
+    "prompt",
+    "seg_duration",
+    "steps",
+    "negative",
+    "seed",
+    "randomize",
+    "quality",
+    "fps",
+    "safe_mode",
+    "session_id",
+  ],
+  "/auto_extend": [
+    "target_seconds",
+    "prompt",
+    "seg_duration",
+    "steps",
+    "negative",
+    "seed",
+    "randomize",
+    "quality",
+    "fps",
+    "safe_mode",
+    "session_id",
+  ],
+};
+
+export function buildPredictArgs(payload, photo, api = "/generate") {
+  const allowed = PREDICT_KEYS[normalizeApi(api)];
   const source = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
-  const args = { ...source };
-  // Gradio State is not a public API keyword. Passing it makes predict throw.
-  delete args.state;
-  delete args.image;
+  const args = {};
+  for (const key of allowed) {
+    if (key === "image") continue;
+    if (Object.prototype.hasOwnProperty.call(source, key) && source[key] !== undefined) {
+      args[key] = source[key];
+    }
+  }
   if (photo) args.image = photo;
   return args;
 }
@@ -176,7 +225,7 @@ export async function callSpaceApi({ api, payload, photo, env = process.env, con
   const apiName = normalizeApi(api);
   const connectFn = connect || ((spaceUrl, hfToken) => defaultConnect(spaceUrl, hfToken));
   const client = await connectFn(space, token || undefined);
-  const args = buildPredictArgs(payload, photo);
+  const args = buildPredictArgs(payload, photo, apiName);
   const result = await client.predict(apiName, args, { timeoutMs: timeoutMs ?? 270000 });
   const mapped = mapPredictResult(result, space);
   if (!mapped.video) {
@@ -205,6 +254,12 @@ export async function handleGenerateRequest(request, deps = {}) {
     if (typeof deps.enqueue === "function") {
       const queued = await deps.enqueue({ api, payload, photo, env });
       return jsonResponse(queued, 202);
+    }
+    if (api === "/generate" && runpodConfigured(env)) {
+      throw new ProxyError(
+        "Generate uses the Runpod Wan Animate endpoint, but this request was not queued.",
+        500
+      );
     }
     const data = await callSpaceApi({
       api,
