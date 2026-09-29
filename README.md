@@ -95,19 +95,57 @@ Do not press Generate while checking the UI. That spends ZeroGPU.
 
 ## Deploy on Netlify
 
-The Netlify function is still there and uses the same proxy code
-(`server/gradioProxy.js`). `netlify.toml` sends `/api/*` to
-`netlify/functions/generate.js`.
+The phone site https://swapr-casey.netlify.app is this repo on Netlify (custom
+site name, not the repo name). `netlify.toml` sends `/api/*` to
+`netlify/functions/`.
 
-1. In Netlify: **Add new site → Import an existing project → GitHub**.
-2. Select repo **`Simzy420/wan22-templates`**.
-3. Build settings (usually auto-detected from `netlify.toml`):
-   - Build command: `npm run build`
-   - Publish directory: `dist`
-4. Site env vars:
-   - `HF_SPACE_URL` = `https://simzy-wan-2-2-templates.hf.space`
-   - `HF_TOKEN` = your HF token (optional, server-side only)
-5. Deploy. Keep `USE_PROXY: true` in `public/config.js`.
+Synchronous Netlify functions stop at **60 seconds**. Wan Animate usually
+takes longer, so Generate does not wait inside `/api/generate`:
+
+1. `POST /api/generate` uploads the still to the Space and returns
+   `{ job_id, phase: "queued" }` (HTTP 202).
+2. `netlify/functions/generate-background.js` (a background function, up to
+   15 minutes) holds the Gradio queue stream and writes the result.
+3. The page polls `GET /api/job?id=...` until `phase` is `done` or `error`.
+
+A missing still is JSON **400**. A Space failure is JSON with `phase: "error"`.
+The function must not exit 1, and it must not substitute the template clip.
+
+`URL` is set by Netlify and is how `/api/generate` starts the background
+worker. Do not invent that value locally.
+
+### Environment variables
+
+Set these on the **swapr-casey** site (**Site configuration → Environment
+variables**). Do not commit them. The Vercel project’s variables are not
+copied here.
+
+| Name | Required | Purpose |
+|------|----------|---------|
+| `HF_TOKEN` | Recommended | Hugging Face token, server-side only. Sent as `Authorization` when the proxy calls the Space. |
+| `HF_SPACE_URL` | No | Default `https://simzy-wan-2-2-templates.hf.space` |
+| `URL` | Set by Netlify | Site origin used to invoke `generate-background`. |
+
+Also set Space secret `HF_TOKEN` on https://huggingface.co/spaces/Simzy/Wan-2.2-templates
+(**Settings → Secrets**) so the Space can call upstream ZeroGPU with Pro quota.
+That secret is separate from the Netlify variable.
+
+### After this merges
+
+GitHub does not publish the custom Netlify site by itself unless that site is
+already linked to this repo.
+
+1. Merge to **`main`**.
+2. In Netlify, open the **swapr-casey** site → **Deploys**.
+3. If a deploy from `main` does not start on its own: **Trigger deploy →
+   Clear cache and deploy site**.
+4. Confirm the new deploy is **Published** before testing on the phone.
+5. On the phone, close the old tab and open https://swapr-casey.netlify.app
+   again so it loads the new page.
+6. Push `space/` to the Hugging Face Space (next section). GitHub does not
+   update the Space.
+
+Build settings from `netlify.toml`: command `npm run build`, publish `dist`.
 
 ## Product flow
 
@@ -125,12 +163,17 @@ Templates are the real ~4s clips in `Simzy/wan22-template-clips` (`demo-wave`, `
 
 The live Space (https://huggingface.co/spaces/Simzy/Wan-2.2-templates) is **HF-git only**. It is not deployed from this GitHub repo automatically. `space/app.py` here matches that proxy app, plus the gallery and how-to panel. API routes are unchanged: `/generate`, `/extend`, `/auto_extend`, `/reset`, `/list_templates`.
 
+Generate on the Space resizes the still to the Animate frame (multiples of 16,
+at least 320px), anchors the prompt to that reference photo, and **refuses**
+the result when it is byte-for-byte the driving template. That refusal is an
+error, not a silent passthrough.
+
 To update what Casey can open today, push this repo’s `space/` folder to the HF Space repo:
 
 ```bash
 git clone https://huggingface.co/spaces/Simzy/Wan-2.2-templates hf-space
 cp space/app.py space/requirements.txt space/README.md hf-space/
-cd hf-space && git add app.py requirements.txt README.md && git commit -m "Autoplay gallery and how-to" && git push
+cd hf-space && git add app.py requirements.txt README.md && git commit -m "Bind the still into Animate and reject template passthrough" && git push
 ```
 
 Use a Hugging Face write token. Do not click Generate on the Space while checking the UI — that spends ZeroGPU.

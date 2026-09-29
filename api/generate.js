@@ -7,6 +7,8 @@
  *   HF_TOKEN      optional Hugging Face token (server-side only)
  *
  * maxDuration is also set in vercel.json (Hobby Fluid limit is 300s).
+ * This route waits on the Space. Netlify cannot (60s), so it queues a job
+ * instead; see netlify/functions/generate.js.
  */
 import { handleGenerateRequest } from "../server/gradioProxy.js";
 

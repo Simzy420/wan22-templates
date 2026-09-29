@@ -25,6 +25,10 @@ covers the pick → upload → generate/extend flow and how to add a 3–5s clip
 
 API routes are unchanged: `/generate`, `/extend`, `/auto_extend`, `/reset`, `/list_templates`.
 
+`/generate` frames the uploaded still to the requested width and height before
+calling upstream Animate, and returns an error if that call hands back the
+driving template unchanged.
+
 ## Usage tip (quota)
 
 If you hit **failed too many attempts** / **429** / queue timeout: **wait 10–15 minutes**

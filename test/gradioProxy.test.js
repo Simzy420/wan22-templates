@@ -234,6 +234,59 @@ describe("platform entrypoints", () => {
     const result = await handler({ httpMethod: "GET", headers: {} });
     assert.equal(result.statusCode, 405);
   });
+
+  it("returns JSON 400 when the still is missing instead of exiting", async () => {
+    let connected = false;
+    const result = await handler(
+      {
+        httpMethod: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ api: "/generate", payload: { template_id: "demo-wave" } }),
+      },
+      {
+        connect: async () => {
+          connected = true;
+          return { predict: async () => ({ data: [] }) };
+        },
+      }
+    );
+    assert.equal(result.statusCode, 400);
+    assert.equal(connected, false);
+    const body = JSON.parse(result.body);
+    assert.match(body.error, /still photo/i);
+  });
+
+  it("enqueues a valid multipart still instead of calling predict", async () => {
+    const seen = [];
+    const form = new FormData();
+    form.append("api", "/generate");
+    form.append("payload", JSON.stringify({ template_id: "demo-walk", prompt: "a person" }));
+    form.append("photo", new File([Uint8Array.from([0xff, 0xd8, 0xff, 0x00])], "still.jpg", { type: "image/jpeg" }));
+    const request = new Request("http://local/api/generate", { method: "POST", body: form });
+    const raw = Buffer.from(await request.arrayBuffer());
+    const result = await handler(
+      {
+        httpMethod: "POST",
+        headers: { "content-type": request.headers.get("content-type") },
+        isBase64Encoded: true,
+        body: raw.toString("base64"),
+      },
+      {
+        enqueue: async (job) => {
+          seen.push(job);
+          return { job_id: "11111111-1111-4111-8111-111111111111", phase: "queued" };
+        },
+      }
+    );
+    assert.equal(result.statusCode, 202);
+    const body = JSON.parse(result.body);
+    assert.equal(body.phase, "queued");
+    assert.equal(body.job_id, "11111111-1111-4111-8111-111111111111");
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].payload.template_id, "demo-walk");
+    assert.equal(seen[0].photo.type, "image/jpeg");
+    assert.ok(seen[0].photo.size > 0);
+  });
 });
 
 describe("phone UI wiring", () => {
@@ -243,8 +296,15 @@ describe("phone UI wiring", () => {
     const vercel = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
     assert.match(config, /USE_PROXY:\s*true/);
     assert.match(main, /fetch\("\/api\/generate"/);
+    assert.match(main, /fetch\(`\/api\/job\?id=/);
     assert.match(main, /callSpace\(api,\s*\{\s*json:\s*args\s*\}\)/);
     assert.match(main, /callSpace\("\/generate"/);
+    assert.match(main, /image\/jpeg/);
+    const proxy = readFileSync(new URL("../server/gradioProxy.js", import.meta.url), "utf8");
+    const space = readFileSync(new URL("../space/app.py", import.meta.url), "utf8");
+    assert.doesNotMatch(proxy, /from ["']@gradio\/client["']/);
+    assert.match(space, /template clip unchanged/);
+    assert.match(space, /cover_resize\(pil, frame_w, frame_h\)/);
     assert.equal(vercel.functions["api/generate.js"].maxDuration, 300);
     assert.equal(vercel.functions["api/video.js"].maxDuration, 60);
     assert.match(vercel.functions["api/generate.js"].includeFiles, /@gradio\/client\/dist/);
