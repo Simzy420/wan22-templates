@@ -99,18 +99,28 @@ The phone site https://swapr-casey.netlify.app is this repo on Netlify (custom
 site name, not the repo name). `netlify.toml` sends `/api/*` to
 `netlify/functions/`.
 
-Synchronous Netlify functions stop at **60 seconds**. Wan Animate usually
-takes longer, so Generate does not wait inside `/api/generate`:
+Synchronous Netlify functions stop at **60 seconds**. That cap is not
+configurable (there is no env var or `netlify.toml` timeout that raises it).
+Background functions stop at **15 minutes**, also a platform cap.
+Wan Animate usually takes longer than 60 seconds and sends no bytes on the
+browser request while it runs, so the gateway answers with an HTML page
+(`Inactivity Timeout` / “Too much time has passed without sending any data”).
+Generate must not wait inside the synchronous function:
 
-1. `POST /api/generate` uploads the still to the Space and returns
-   `{ job_id, phase: "queued" }` (HTTP 202).
-2. `netlify/functions/generate-background.js` (a background function, up to
-   15 minutes) holds the Gradio queue stream and writes the result.
-3. The page polls `GET /api/job?id=...` until `phase` is `done` or `error`.
+1. `POST /api/generate` uploads the still (20s cap) and returns
+   `{ job_id, phase: "queued" }` (HTTP 202) well inside the 60s limit.
+2. It starts `generate-background` and only waits for the **202 headers**
+   (8s cap). It does not read the worker body.
+3. `netlify.toml` sets `[functions."generate-background"] background = true`
+   (the `-background` filename does the same). That worker holds the Gradio
+   queue for up to 15 minutes and writes the result.
+4. The page polls `GET /api/job?id=...` for up to 14 minutes until `phase`
+   is `done` or `error`.
 
 A missing still is JSON **400**. A Space failure, including a color-noise or
-near-black clip, is JSON with `phase: "error"` and no video URL. The function
-must not exit 1.
+near-black clip, is JSON with `phase: "error"` and no video URL. An HTML
+gateway timeout is turned into that same kind of sentence, never shown raw.
+The function must not exit 1.
 
 `URL` is set by Netlify and is how `/api/generate` starts the background
 worker. Do not invent that value locally.
@@ -140,10 +150,15 @@ already linked to this repo.
 2. In Netlify, open the **swapr-casey** site → **Deploys**.
 3. If a deploy from `main` does not start on its own: **Trigger deploy →
    Clear cache and deploy site**.
-4. Confirm the new deploy is **Published** before testing on the phone.
-5. On the phone, close the old tab and open https://swapr-casey.netlify.app
+4. There is no timeout field to raise. **Site configuration → Functions**
+   cannot set a synchronous function above 60 seconds. After this deploy,
+   **Functions** should list `generate-background` as a background function
+   (15 minutes). `generate` and `job` stay synchronous and must return
+   immediately.
+5. Confirm the new deploy is **Published** before testing on the phone.
+6. On the phone, close the old tab and open https://swapr-casey.netlify.app
    again so it loads the new page.
-6. Push `space/` to the Hugging Face Space (next section). GitHub does not
+7. Push `space/` to the Hugging Face Space (next section). GitHub does not
    update the Space.
 
 Build settings from `netlify.toml`: command `npm run build`, publish `dist`.

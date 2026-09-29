@@ -874,7 +874,7 @@ HOWTO_MD = """
 2. **Tap Select this motion** on the clip you want. Nothing is generated yet.
 3. **Upload a still** of the person who should become the character (JPG or PNG, face or full body). The upload stays locked until a template is selected.
 4. Optionally edit the prompt or open **Animate settings**.
-5. Tap **Generate — become the character**. Wan Animate runs on ZeroGPU. When the queue is busy this often takes 1–3+ minutes. You get a short clip of that person in the template motion.
+5. Tap **Generate — become the character**. Wan Animate runs on ZeroGPU. A run usually takes several minutes, and a busy queue can take longer than 10. Leave this tab open. You get a short clip of that person in the template motion.
 6. Optionally **Extend** once, or **Auto-extend** toward a target length. Stay in this same browser session so the session id is kept. Extend chains from the last frame (same pattern as wan22-extend).
 7. If you see a rate limit, 429, or “failed too many attempts”: wait 10–15 minutes and press Generate **once**. Do not retry in a loop — each attempt uses ZeroGPU quota.
 

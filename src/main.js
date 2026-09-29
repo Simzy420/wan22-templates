@@ -4,6 +4,7 @@
  * same-origin /api/generate when USE_PROXY is true (required on iPhone).
  * Result video URLs on the Space host are rewritten to /api/video.
  */
+import { publicErrorText } from "../server/gatewayError.js";
 import { rewriteSpaceVideoUrl } from "../server/videoUrl.js";
 
 const cfg = window.CONFIG || {};
@@ -16,6 +17,8 @@ const CDN_BASE =
   cfg.DATASET_CDN_BASE ||
   "https://huggingface.co/datasets/Simzy/wan22-template-clips/resolve/main/";
 const USE_PROXY = cfg.USE_PROXY === true;
+const WAIT_COPY =
+  "ZeroGPU usually takes several minutes, and a busy queue can take longer than 10. Leave this tab open.";
 
 let templates = [];
 let selectedId = null;
@@ -378,7 +381,7 @@ function sleep(ms) {
 /** Netlify starts the Wan run in the background and the page polls /api/job. */
 async function pollJob(jobId) {
   const started = Date.now();
-  const limit = 12 * 60 * 1000;
+  const limit = 14 * 60 * 1000;
   while (Date.now() - started < limit) {
     await sleep(2500);
     const res = await fetch(`/api/job?id=${encodeURIComponent(jobId)}`);
@@ -390,20 +393,22 @@ async function pollJob(jobId) {
       data = null;
     }
     if (res.status === 404) {
-      els.genStatus.textContent = "Queued on ZeroGPU… this often takes a few minutes. Leave this tab open.";
+      els.genStatus.textContent = `Queued on ZeroGPU… ${WAIT_COPY}`;
       continue;
     }
     if (!res.ok) {
-      throw new Error((data && data.error) || text || `Job HTTP ${res.status}`);
+      throw new Error(publicErrorText((data && data.error) || text || `Job HTTP ${res.status}`));
     }
     if (data?.phase === "done") return data;
-    if (data?.phase === "error") throw new Error(data.error || "Generate failed");
+    if (data?.phase === "error") throw new Error(publicErrorText(data.error || "Generate failed"));
     els.genStatus.textContent =
       data?.phase === "running"
-        ? "Running Wan Animate on ZeroGPU… this often takes a few minutes. Leave this tab open."
-        : "Queued on ZeroGPU… this often takes a few minutes. Leave this tab open.";
+        ? `Running Wan Animate on ZeroGPU… ${WAIT_COPY}`
+        : `Queued on ZeroGPU… ${WAIT_COPY}`;
   }
-  throw new Error("Timed out waiting for Generate. If ZeroGPU is busy, wait 10–15 minutes and try once.");
+  throw new Error(
+    "Timed out waiting for Generate. ZeroGPU can take longer than 10 minutes when the queue is busy. Wait 10–15 minutes and try once."
+  );
 }
 
 /** Same-origin proxy. Used for generate, extend, and auto_extend when USE_PROXY is true. */
@@ -424,10 +429,10 @@ async function callSpace(apiName, payload) {
     data = null;
   }
   if (!res.ok && res.status !== 202) {
-    throw new Error((data && data.error) || text || `Proxy HTTP ${res.status}`);
+    throw new Error(publicErrorText((data && data.error) || text || `Proxy HTTP ${res.status}`));
   }
-  if (!data) throw new Error("Proxy returned an empty response");
-  if (data.phase === "error") throw new Error(data.error || "Generate failed");
+  if (!data) throw new Error(publicErrorText(text || "Proxy returned an empty response"));
+  if (data.phase === "error") throw new Error(publicErrorText(data.error || "Generate failed"));
   if (data.phase === "queued" || data.phase === "running") {
     if (!data.job_id) throw new Error("Generate did not return a job id");
     return pollJob(data.job_id);
@@ -437,7 +442,7 @@ async function callSpace(apiName, payload) {
 
 els.btnGen.addEventListener("click", async () => {
   if (!selectedId || !photoFile) return;
-  setBusy("Queuing on ZeroGPU… this can take 1–3+ minutes when busy.");
+  setBusy(`Queuing on ZeroGPU… ${WAIT_COPY}`);
   try {
     const args = generateArgs();
     if (USE_PROXY) {
@@ -461,7 +466,7 @@ els.btnGen.addEventListener("click", async () => {
     const hint = USE_PROXY
       ? ""
       : " If CORS blocked, set window.CONFIG.USE_PROXY = true and redeploy.";
-    els.genStatus.textContent = `Generate failed: ${e.message || e}.${hint}`;
+    els.genStatus.textContent = `Generate failed: ${publicErrorText(e)}.${hint}`;
   } finally {
     clearBusy();
   }
@@ -472,7 +477,7 @@ async function extendOnce(auto) {
     els.genStatus.textContent = "Generate a clip first.";
     return;
   }
-  setBusy(auto ? "Auto-extending (multiple ZeroGPU calls)…" : "Extending…");
+  setBusy(auto ? `Auto-extending on ZeroGPU… ${WAIT_COPY}` : `Extending on ZeroGPU… ${WAIT_COPY}`);
   try {
     const api = auto ? "/auto_extend" : "/extend";
     if (!sessionId) {
@@ -496,7 +501,7 @@ async function extendOnce(auto) {
     }
   } catch (e) {
     console.error(e);
-    els.genStatus.textContent = `Extend failed: ${e.message || e}`;
+    els.genStatus.textContent = `Extend failed: ${publicErrorText(e)}`;
   } finally {
     clearBusy();
   }

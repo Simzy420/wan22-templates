@@ -50,6 +50,7 @@ function isNetlifyRuntime() {
 }
 
 export async function handler(event, context) {
+  if (context) context.callbackWaitsForEmptyEventLoop = false;
   try {
     const request = eventToRequest(event);
     const deps = {};

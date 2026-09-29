@@ -3,8 +3,12 @@
  * caller immediately and lets this run for up to 15 minutes.
  *
  * Always resolves successfully so the platform does not retry the GPU call.
+ * Synchronous functions cannot be raised past 60 seconds. This file is the
+ * 15-minute worker. netlify.toml also sets background = true.
  */
 import { netlifyJobStore, runBackgroundJob, memoryJobStore } from "../../server/jobs.js";
+
+export const config = { background: true };
 
 function parseSpec(event) {
   const raw = event?.isBase64Encoded

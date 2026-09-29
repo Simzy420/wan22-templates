@@ -5,6 +5,8 @@
  * with status 1 — the Netlify Runtime.ExitError.
  */
 
+import { publicErrorText } from "./gatewayError.js";
+
 const API_PREFIX = "/gradio_api";
 
 export function httpError(message, statusCode = 502) {
@@ -99,7 +101,7 @@ export async function uploadFiles(space, token, files, fetchImpl = fetch) {
   });
   const text = await response.text();
   if (!response.ok) {
-    throw httpError(`Upload to the Space failed (HTTP ${response.status}): ${text.slice(0, 300)}`, 502);
+    throw httpError(publicErrorText(`Upload to the Space failed (HTTP ${response.status}): ${text.slice(0, 500)}`), 502);
   }
   let paths;
   try {
@@ -234,7 +236,7 @@ export function createGradioHttpClient({
       if (!join.ok) {
         const text = await join.text();
         throw httpError(
-          `Space queue rejected the request (HTTP ${join.status}): ${text.slice(0, 400)}`,
+          publicErrorText(`Space queue rejected the request (HTTP ${join.status}): ${text.slice(0, 500)}`),
           join.status === 422 ? 400 : 502
         );
       }
@@ -246,7 +248,7 @@ export function createGradioHttpClient({
       );
       if (!stream.ok) {
         const text = await stream.text();
-        throw httpError(`Space result stream failed (HTTP ${stream.status}): ${text.slice(0, 300)}`, 502);
+        throw httpError(publicErrorText(`Space result stream failed (HTTP ${stream.status}): ${text.slice(0, 500)}`), 502);
       }
       const output = await readQueue(stream, limit, startedAt);
       return { data: output };

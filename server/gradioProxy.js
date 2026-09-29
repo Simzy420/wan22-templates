@@ -8,6 +8,7 @@
  * Calls the Hugging Face Space with a fetch-only Gradio queue client so the
  * phone browser never makes a cross-origin Gradio request.
  */
+import { publicErrorText } from "./gatewayError.js";
 import { createGradioHttpClient } from "./gradioHttp.js";
 import { absolutizeSpaceUrl, DEFAULT_SPACE, rewriteSpaceVideoUrl } from "./videoUrl.js";
 
@@ -88,13 +89,13 @@ export function mapPredictResult(result, space = DEFAULT_SPACE) {
 
 export function errorMessage(error) {
   if (!error) return "Unknown error";
-  if (typeof error === "string") return error;
-  if (typeof error.message === "string" && error.message) return error.message;
-  if (typeof error.error === "string" && error.error) return error.error;
+  if (typeof error === "string") return publicErrorText(error);
+  if (typeof error.message === "string" && error.message) return publicErrorText(error.message);
+  if (typeof error.error === "string" && error.error) return publicErrorText(error.error);
   try {
-    return JSON.stringify(error);
+    return publicErrorText(JSON.stringify(error));
   } catch {
-    return String(error);
+    return publicErrorText(String(error));
   }
 }
 

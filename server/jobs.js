@@ -4,6 +4,7 @@
  * generate-background, which holds the Gradio queue stream for up to 15 minutes.
  */
 import { connectLambda, getStore } from "@netlify/blobs";
+import { publicErrorText } from "./gatewayError.js";
 import { DEFAULT_SPACE } from "./videoUrl.js";
 import { uploadFiles } from "./gradioHttp.js";
 import { callSpaceApi } from "./gradioProxy.js";
@@ -11,10 +12,19 @@ import { callSpaceApi } from "./gradioProxy.js";
 export const JOB_STORE = "wan22-jobs";
 
 function errorText(error) {
-  if (!error) return "Generate failed";
-  if (typeof error === "string") return error;
-  if (typeof error.message === "string" && error.message) return error.message;
-  return String(error);
+  return publicErrorText(error || "Generate failed");
+}
+
+export const UPLOAD_TIMEOUT_MS = 20000;
+export const KICK_TIMEOUT_MS = 8000;
+
+function withTimeout(fetchImpl, timeoutMs) {
+  return (url, init = {}) => fetchImpl(url, { ...init, signal: init.signal || AbortSignal.timeout(timeoutMs) });
+}
+
+function timeoutMessage(error, fallback) {
+  if (error?.name === "TimeoutError" || error?.name === "AbortError") return fallback;
+  return errorText(error);
 }
 
 export function memoryJobStore() {
@@ -103,16 +113,31 @@ export function backgroundUrl(env = process.env) {
   return `${base}/.netlify/functions/generate-background`;
 }
 
-export async function kickBackground(spec, env = process.env, fetchImpl = fetch) {
-  const response = await fetchImpl(backgroundUrl(env), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(spec),
-  });
-  if (response.status !== 202 && !response.ok) {
-    const text = await response.text();
-    throw new Error(`Could not start the generate worker (HTTP ${response.status}). ${text.slice(0, 200)}`);
+export async function kickBackground(spec, env = process.env, fetchImpl = fetch, timeoutMs = KICK_TIMEOUT_MS) {
+  // Headers only. Reading the body would wait for a worker that was not
+  // marked background, and the synchronous function would die at 60s.
+  let response;
+  try {
+    response = await fetchImpl(backgroundUrl(env), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(spec),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    throw new Error(
+      timeoutMessage(
+        error,
+        "The long Wan worker did not accept the job in time. Wait 10–15 minutes and try Generate once."
+      )
+    );
   }
+  if (response.status === 202 || response.ok) {
+    await response.body?.cancel?.().catch(() => {});
+    return;
+  }
+  const text = typeof response.text === "function" ? await response.text() : "";
+  throw new Error(publicErrorText(`Could not start the generate worker (HTTP ${response.status}). ${text}`));
 }
 
 export async function enqueueGenerateJob(job, deps = {}) {
@@ -122,8 +147,19 @@ export async function enqueueGenerateJob(job, deps = {}) {
   const fetchImpl = deps.fetch || fetch;
   let image = null;
   if (job.photo) {
-    const upload = deps.upload || ((file) => uploadReference(space, token, file, fetchImpl));
-    image = await upload(job.photo);
+    const upload =
+      deps.upload ||
+      ((file) => uploadReference(space, token, file, withTimeout(fetchImpl, UPLOAD_TIMEOUT_MS)));
+    try {
+      image = await upload(job.photo);
+    } catch (error) {
+      throw new Error(
+        timeoutMessage(
+          error,
+          "The still could not be uploaded before the host closed the connection. Wait 10–15 minutes and try Generate once."
+        )
+      );
+    }
   }
   const job_id = crypto.randomUUID();
   const spec = {
@@ -134,7 +170,7 @@ export async function enqueueGenerateJob(job, deps = {}) {
   };
   const store = deps.store || netlifyJobStore(deps.event);
   await store.setJSON(job_id, { id: job_id, phase: "queued" });
-  const kick = deps.kick || ((body) => kickBackground(body, env, fetchImpl));
+  const kick = deps.kick || ((body) => kickBackground(body, env, fetchImpl, KICK_TIMEOUT_MS));
   try {
     await kick(spec);
   } catch (error) {

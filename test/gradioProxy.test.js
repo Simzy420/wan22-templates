@@ -300,6 +300,12 @@ describe("phone UI wiring", () => {
     assert.match(main, /callSpace\(api,\s*\{\s*json:\s*args\s*\}\)/);
     assert.match(main, /callSpace\("\/generate"/);
     assert.match(main, /image\/jpeg/);
+    assert.match(main, /publicErrorText/);
+    assert.match(main, /longer than 10/);
+    assert.doesNotMatch(main, /60 seconds/);
+    const toml = readFileSync(new URL("../netlify.toml", import.meta.url), "utf8");
+    assert.match(toml, /\[functions\."generate-background"\]/);
+    assert.match(toml, /background = true/);
     const proxy = readFileSync(new URL("../server/gradioProxy.js", import.meta.url), "utf8");
     const space = readFileSync(new URL("../space/app.py", import.meta.url), "utf8");
     assert.doesNotMatch(proxy, /from ["']@gradio\/client["']/);
