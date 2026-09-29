@@ -265,6 +265,82 @@ describe("Generate job on Runpod", () => {
     assert.equal(Buffer.from(netlify.body, "base64").subarray(4, 8).toString(), "ftyp");
   });
 
+  it("calls Runpod instead of Gradio when a generate spec was labeled hf", async () => {
+    const store = memoryJobStore();
+    const encoded = tinyMp4().toString("base64");
+    let predicted = false;
+    const spec = {
+      job_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      api: "/generate",
+      backend: "hf",
+      payload: {
+        template_id: "demo-dance",
+        video_url: MOTION,
+        prompt: "a person",
+        width: 384,
+        seed: 42,
+        state: { video: "/secret" },
+      },
+      image: { path: "/tmp/should-not-send" },
+      image_base64: Buffer.from("still").toString("base64"),
+      video_url: MOTION,
+    };
+    await store.setJSON(spec.job_id, { id: spec.job_id, phase: "queued" });
+    const done = await runBackgroundJob(spec, {
+      store,
+      env: ENV,
+      connect: async () => ({
+        predict: async () => {
+          predicted = true;
+          throw new Error("Gradio should not run Generate when Runpod is configured");
+        },
+      }),
+      fetch: async (url, init) => {
+        assert.match(url, /api\.runpod\.ai\/v2\/zrmwpir4qzs66s\/run$/);
+        const body = JSON.parse(init.body);
+        assert.equal(body.input.video_url, MOTION);
+        assert.equal(body.input.image_base64, spec.image_base64);
+        assert.equal("video_base64" in body.input, false);
+        assert.equal(init.headers.Authorization, "Bearer secret-key");
+        return jsonRes({ id: "rp-hf-label", status: "COMPLETED", output: { video: encoded } });
+      },
+    });
+    assert.equal(predicted, false);
+    assert.equal(done.phase, "done");
+    assert.equal(done.video, `/api/result?id=${spec.job_id}`);
+    assert.equal(JSON.stringify(done).includes("secret-key"), false);
+  });
+
+  it("does not send an unprepared generate job to Gradio when Runpod is configured", async () => {
+    const store = memoryJobStore();
+    let predicted = false;
+    const spec = {
+      job_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      api: "/generate",
+      backend: "hf",
+      payload: { template_id: "demo-dance", video_url: MOTION, prompt: "a person" },
+      image: { path: "/tmp/gradio/me.jpg" },
+    };
+    await store.setJSON(spec.job_id, { id: spec.job_id, phase: "queued" });
+    const failed = await runBackgroundJob(spec, {
+      store,
+      env: ENV,
+      connect: async () => ({
+        predict: async () => {
+          predicted = true;
+          throw new Error("Gradio should not see video_url");
+        },
+      }),
+      fetch: async () => {
+        throw new Error("Runpod should not be called without a still");
+      },
+    });
+    assert.equal(predicted, false);
+    assert.equal(failed.phase, "error");
+    assert.match(failed.error, /not prepared/);
+    assert.equal(failed.video, undefined);
+  });
+
   it("stores an out-of-credits error and does not invent a video", async () => {
     const store = memoryJobStore();
     const spec = {

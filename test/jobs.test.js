@@ -67,12 +67,14 @@ describe("generate jobs", () => {
     let predicts = 0;
     const done = await runBackgroundJob(spec, {
       store,
+      env: { HF_GENERATE_FALLBACK: "true", HF_SPACE_URL: "https://simzy-wan-2-2-templates.hf.space" },
       connect: async () => ({
         predict: async (api, args) => {
           predicts += 1;
           assert.equal(api, "/generate");
           assert.equal(args.template_id, "demo-dance");
           assert.equal(args.image.path, "/tmp/gradio/me.jpg");
+          assert.equal("video_url" in args, false);
           return fakePredict();
         },
       }),
@@ -83,6 +85,7 @@ describe("generate jobs", () => {
     assert.match(decodeURIComponent(done.video), new RegExp(SPACE_FILE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     const again = await runBackgroundJob(spec, {
       store,
+      env: { HF_GENERATE_FALLBACK: "true" },
       connect: async () => ({
         predict: async () => {
           predicts += 1;
@@ -102,6 +105,42 @@ describe("generate jobs", () => {
     assert.equal(publicJob(await store.getJSON(spec.job_id)).video, done.video);
   });
 
+  it("does not pass video_url when a Generate job falls back to the Space", async () => {
+    const store = memoryJobStore();
+    const motion =
+      "https://huggingface.co/datasets/Simzy/wan22-template-clips/resolve/main/templates/demo-wave.mp4";
+    const spec = {
+      job_id: "12121212-1212-4212-8212-121212121212",
+      api: "/generate",
+      backend: "hf",
+      payload: {
+        template_id: "demo-wave",
+        video_url: motion,
+        prompt: "a person",
+        state: { video: "/secret" },
+      },
+      image: { path: "/tmp/gradio/me.jpg", meta: { _type: "gradio.FileData" }, orig_name: "me.jpg" },
+    };
+    await store.setJSON(spec.job_id, { id: spec.job_id, phase: "queued" });
+    const done = await runBackgroundJob(spec, {
+      store,
+      env: { HF_GENERATE_FALLBACK: "true", HF_SPACE_URL: "https://simzy-wan-2-2-templates.hf.space" },
+      connect: async () => ({
+        predict: async (api, args) => {
+          assert.equal(api, "/generate");
+          assert.equal("video_url" in args, false);
+          assert.equal("state" in args, false);
+          assert.equal(args.template_id, "demo-wave");
+          assert.equal(args.prompt, "a person");
+          assert.equal(args.image.path, "/tmp/gradio/me.jpg");
+          return fakePredict();
+        },
+      }),
+    });
+    assert.equal(done.phase, "done");
+    assert.equal(done.session_id, "sess-job");
+  });
+
   it("stores a Space failure instead of a template clip", async () => {
     const store = memoryJobStore();
     const spec = {
@@ -114,6 +153,12 @@ describe("generate jobs", () => {
       { body: JSON.stringify(spec), headers: {} },
       {
         store,
+        env: {
+          HF_GENERATE_FALLBACK: "true",
+          HF_SPACE_URL: "https://simzy-wan-2-2-templates.hf.space",
+          RUNPOD_API_KEY: "",
+          RUNPOD_ENDPOINT_ID: "",
+        },
         connect: async () => ({
           predict: async () => {
             throw new Error("ZeroGPU quota exceeded");

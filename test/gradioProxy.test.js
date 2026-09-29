@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { handler } from "../netlify/functions/generate.js";
 import generateRoute from "../api/generate.js";
+import { positionalArgs } from "../server/gradioHttp.js";
 import {
   absolutizeSpaceUrl,
   buildPredictArgs,
@@ -11,8 +12,20 @@ import {
   mapPredictResult,
   normalizeApi,
 } from "../server/gradioProxy.js";
+import { memoryJobStore, netlifyFunctionEnv } from "../server/jobs.js";
 
 const SPACE = "https://simzy-wan-2-2-templates.hf.space";
+const MOTION =
+  "https://huggingface.co/datasets/Simzy/wan22-template-clips/resolve/main/templates/demo-dance.mp4";
+
+function gradioParams(names, required = []) {
+  const must = new Set(required);
+  return names.map((parameter_name) => ({
+    parameter_name,
+    parameter_has_default: !must.has(parameter_name),
+    parameter_default: null,
+  }));
+}
 
 function fakeResult(sessionId = "sess-1") {
   return {
@@ -78,10 +91,100 @@ describe("gradio proxy mapping", () => {
 
   it("drops state and replaces image with the uploaded photo", () => {
     const photo = new File([Buffer.from("img")], "me.jpg", { type: "image/jpeg" });
-    const args = buildPredictArgs({ template_id: "demo-wave", state: { video: "/secret" }, image: "nope" }, photo);
+    const args = buildPredictArgs(
+      { template_id: "demo-wave", state: { video: "/secret" }, image: "nope", video_url: MOTION },
+      photo
+    );
     assert.equal(args.template_id, "demo-wave");
     assert.equal(args.image, photo);
     assert.equal("state" in args, false);
+    assert.equal("video_url" in args, false);
+  });
+
+  it("sends Gradio only the keys each Space API accepts", () => {
+    const photo = new File([Buffer.from("img")], "me.jpg", { type: "image/jpeg" });
+    const extra = {
+      video_url: MOTION,
+      state: { video: "/secret" },
+      request: { headers: {} },
+      progress: 1,
+      foo: "nope",
+    };
+    const generate = buildPredictArgs(
+      {
+        ...extra,
+        template_id: "demo-wave",
+        prompt: "a person",
+        max_seconds: 3,
+        height: 480,
+        width: 384,
+        steps: 6,
+        guidance: 1,
+        sample_shift: 5,
+        negative: "",
+        seed: 42,
+        session_id: "",
+      },
+      photo,
+      "/generate"
+    );
+    assert.equal("video_url" in generate, false);
+    assert.equal("state" in generate, false);
+    assert.equal("request" in generate, false);
+    assert.equal("progress" in generate, false);
+    assert.equal(generate.template_id, "demo-wave");
+    assert.equal(generate.width, 384);
+    assert.equal(generate.image, photo);
+    const positional = positionalArgs(
+      gradioParams(
+        [
+          "template_id",
+          "image",
+          "prompt",
+          "max_seconds",
+          "height",
+          "width",
+          "steps",
+          "guidance",
+          "sample_shift",
+          "negative",
+          "seed",
+          "session_id",
+        ],
+        ["template_id", "image"]
+      ),
+      generate
+    );
+    assert.equal(positional.includes(MOTION), false);
+    assert.equal(positional[0], "demo-wave");
+    assert.equal(positional[1], photo);
+
+    const extend = buildPredictArgs(
+      { ...extra, template_id: "demo-wave", prompt: "keep going", session_id: "sess-9", seg_duration: 3.5, target_seconds: 12 },
+      null,
+      "/extend"
+    );
+    assert.equal("video_url" in extend, false);
+    assert.equal("template_id" in extend, false);
+    assert.equal("target_seconds" in extend, false);
+    assert.equal(extend.session_id, "sess-9");
+    assert.equal(extend.seg_duration, 3.5);
+    positionalArgs(
+      gradioParams(
+        ["prompt", "seg_duration", "steps", "negative", "seed", "randomize", "quality", "fps", "safe_mode", "session_id"],
+        []
+      ),
+      extend
+    );
+
+    const auto = buildPredictArgs(
+      { ...extra, prompt: "keep going", session_id: "sess-9", target_seconds: 12 },
+      null,
+      "/auto_extend"
+    );
+    assert.equal("video_url" in auto, false);
+    assert.equal(auto.target_seconds, 12);
+    assert.equal(auto.session_id, "sess-9");
   });
 
   it("allows only generate, extend, and auto_extend", () => {
@@ -105,9 +208,11 @@ describe("handleGenerateRequest", () => {
       "payload",
       JSON.stringify({
         template_id: "demo-wave",
+        video_url: MOTION,
         prompt: "a person",
         session_id: "",
         state: { video: "/tmp/should-not-send" },
+        width: 384,
       })
     );
     form.append("api", "/generate");
@@ -125,7 +230,9 @@ describe("handleGenerateRequest", () => {
     assert.equal(calls[0].api, "/generate");
     assert.equal(calls[0].args.template_id, "demo-wave");
     assert.equal(calls[0].args.prompt, "a person");
+    assert.equal(calls[0].args.width, 384);
     assert.equal("state" in calls[0].args, false);
+    assert.equal("video_url" in calls[0].args, false);
     assert.equal(calls[0].args.image.name, "still.jpg");
     assert.ok(calls[0].args.image.size > 0);
   });
@@ -176,6 +283,24 @@ describe("handleGenerateRequest", () => {
     assert.match(body.error, /Unsupported api/);
   });
 
+  it("does not call Gradio for Generate when Runpod is set and the job was not queued", async () => {
+    const calls = [];
+    const form = new FormData();
+    form.append("api", "/generate");
+    form.append("payload", JSON.stringify({ template_id: "demo-wave", video_url: MOTION, prompt: "a person" }));
+    form.append("photo", new File([Buffer.from("jpeg-bytes")], "still.jpg", { type: "image/jpeg" }));
+    const res = await handleGenerateRequest(new Request("http://local/api/generate", { method: "POST", body: form }), {
+      connect: mockConnect(calls),
+      env: { RUNPOD_API_KEY: "test-key", RUNPOD_ENDPOINT_ID: "zrmwpir4qzs66s" },
+    });
+    assert.equal(res.status, 500);
+    assert.equal(calls.length, 0);
+    const body = await res.json();
+    assert.match(body.error, /not queued/);
+    assert.doesNotMatch(body.error, /video_url/);
+    assert.equal(body.error.includes("test-key"), false);
+  });
+
   it("returns the client error without throwing", async () => {
     const res = await handleGenerateRequest(
       new Request("http://local/api/generate", {
@@ -203,12 +328,32 @@ describe("platform entrypoints", () => {
     assert.equal(res.status, 405);
   });
 
-  it("Netlify handler decodes a base64 multipart body", async () => {
+  it("queues Generate on Runpod when the endpoint is set, even if NETLIFY is unset and connect exists", async () => {
     const calls = [];
+    const kicked = [];
+    let uploads = 0;
+    const photoBytes = Uint8Array.from([0xff, 0xd8, 0xff, 0x00]);
     const form = new FormData();
     form.append("api", "/generate");
-    form.append("payload", JSON.stringify({ template_id: "demo-dance", session_id: "keep" }));
-    form.append("photo", new File([Uint8Array.from([0xff, 0xd8, 0xff, 0x00])], "phone.jpg", { type: "image/jpeg" }));
+    form.append(
+      "payload",
+      JSON.stringify({
+        template_id: "demo-dance",
+        video_url: MOTION,
+        prompt: "a person",
+        max_seconds: 3,
+        height: 480,
+        width: 384,
+        steps: 6,
+        guidance: 1,
+        sample_shift: 5,
+        negative: "",
+        seed: 42,
+        session_id: "keep",
+        state: { video: "/secret" },
+      })
+    );
+    form.append("photo", new File([photoBytes], "phone.jpg", { type: "image/jpeg" }));
     const request = new Request("http://local/api/generate", { method: "POST", body: form });
     const raw = Buffer.from(await request.arrayBuffer());
     const result = await handler(
@@ -218,16 +363,56 @@ describe("platform entrypoints", () => {
         isBase64Encoded: true,
         body: raw.toString("base64"),
       },
-      { connect: mockConnect(calls) }
+      {
+        // The old gate skipped the queue when connect was present or NETLIFY was not "true".
+        connect: mockConnect(calls),
+        env: {
+          RUNPOD_API_KEY: "test-key",
+          RUNPOD_ENDPOINT_ID: "zrmwpir4qzs66s",
+          RUNPOD_ENDPOINT_URL: "https://api.runpod.ai/v2/zrmwpir4qzs66s",
+          URL: "https://swapr-casey.netlify.app",
+        },
+        store: memoryJobStore(),
+        upload: async () => {
+          uploads += 1;
+          throw new Error("still must not be uploaded to the Space");
+        },
+        fetch: async () => {
+          throw new Error("the sync function must not call Gradio or the catalog");
+        },
+        kick: async (spec) => {
+          kicked.push(spec);
+        },
+      }
     );
-    assert.equal(result.statusCode, 200);
+    assert.equal(result.statusCode, 202);
     const body = JSON.parse(result.body);
-    assert.equal(body.session_id, "sess-9");
-    assert.equal(body.video, proxied(`${SPACE}/gradio_api/file=/tmp/out.mp4`));
-    assert.equal(calls[0].api, "/generate");
-    assert.equal(calls[0].args.template_id, "demo-dance");
-    assert.equal(calls[0].args.session_id, "keep");
-    assert.equal(calls[0].args.image.type, "image/jpeg");
+    assert.equal(body.phase, "queued");
+    assert.equal(typeof body.job_id, "string");
+    assert.equal(calls.length, 0);
+    assert.equal(uploads, 0);
+    assert.equal(kicked.length, 1);
+    assert.equal(kicked[0].backend, "runpod");
+    assert.equal(kicked[0].api, "/generate");
+    assert.equal(kicked[0].video_url, MOTION);
+    assert.equal(kicked[0].payload.template_id, "demo-dance");
+    assert.equal(kicked[0].payload.session_id, "keep");
+    assert.equal(kicked[0].image, null);
+    assert.equal(kicked[0].image_base64, Buffer.from(photoBytes).toString("base64"));
+    assert.equal(JSON.stringify(body).includes("test-key"), false);
+    assert.equal(JSON.stringify(kicked[0]).includes("test-key"), false);
+  });
+
+  it("keeps site Runpod env when context.env does not repeat it", () => {
+    const env = netlifyFunctionEnv(
+      { env: { URL: "https://swapr-casey.netlify.app" } },
+      { RUNPOD_API_KEY: "site-key", RUNPOD_ENDPOINT_ID: "zrmwpir4qzs66s", URL: "https://old.example" }
+    );
+    assert.equal(env.RUNPOD_API_KEY, "site-key");
+    assert.equal(env.RUNPOD_ENDPOINT_ID, "zrmwpir4qzs66s");
+    assert.equal(env.URL, "https://swapr-casey.netlify.app");
+    const site = netlifyFunctionEnv(undefined, { RUNPOD_API_KEY: "site-key", RUNPOD_ENDPOINT_ID: "zrmwpir4qzs66s" });
+    assert.equal(site.RUNPOD_ENDPOINT_ID, "zrmwpir4qzs66s");
   });
 
   it("Netlify GET does not call the Space", async () => {

@@ -6,7 +6,7 @@
  * Extend still calls the Space. Always resolves successfully so the platform
  * does not retry the GPU call. netlify.toml also sets background = true.
  */
-import { netlifyJobStore, runBackgroundJob, memoryJobStore } from "../../server/jobs.js";
+import { memoryJobStore, netlifyFunctionEnv, netlifyJobStore, runBackgroundJob } from "../../server/jobs.js";
 
 export const config = { background: true };
 
@@ -27,7 +27,7 @@ export async function handler(event, context) {
       await runBackgroundJob(spec, {
         store,
         connect: context?.connect,
-        env: context?.env || process.env,
+        env: netlifyFunctionEnv(context),
         fetch: context?.fetch,
         timeoutMs: context?.timeoutMs,
         intervalMs: context?.intervalMs,
