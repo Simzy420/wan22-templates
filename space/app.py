@@ -12,6 +12,7 @@ Templates: dataset Simzy/wan22-template-clips
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import os
@@ -26,6 +27,7 @@ from typing import Any
 import cv2
 import gradio as gr
 import numpy as np
+from clip_quality import assess_video
 from gradio_client import Client, handle_file
 from huggingface_hub import hf_hub_download, list_repo_files
 from PIL import Image, ImageOps
@@ -232,6 +234,20 @@ def save_image(img, dest: Path) -> Path | None:
     out = dest.with_suffix(".png")
     pil.save(out)
     return out
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _mult16(value: int, minimum: int = 320) -> int:
+    """Match the upstream Animate slider floor and its multiple-of-16 rule."""
+    n = int(value) - (int(value) % 16)
+    return max(minimum, n)
 
 
 def _even(n: int) -> int:
@@ -583,6 +599,19 @@ def call_wan_i2v(
     return dest
 
 
+def _refuse_junk(path: str | Path, action: str) -> None:
+    """Raise before a mush, near-black, or unreadable file is saved as the result."""
+    try:
+        reason = assess_video(path, action)
+    except Exception as e:
+        raise gr.Error(
+            f"{action} returned a clip that could not be checked, so it was not saved. "
+            "Wait 10–15 minutes and try once."
+        ) from e
+    if reason:
+        raise gr.Error(reason)
+
+
 def status_line(segments: list[str], duration_est: float) -> str:
     n = len(segments)
     # HF_TOKEN / HUGGING_FACE_HUB_TOKEN is the Space secret (Pro quota when eligible).
@@ -628,25 +657,39 @@ def do_generate(
     sess.mkdir(parents=True, exist_ok=True)
     state["dir"] = str(sess)
 
-    img_path = save_image(image, sess / "input")
-    if img_path is None:
+    pil = load_pil_image(image)
+    if pil is None:
         raise gr.Error("Could not read the uploaded photo.")
+    if min(pil.size) < 64:
+        raise gr.Error("That still is too small. Use a photo at least 64 pixels on each side.")
+
+    frame_w = _mult16(width)
+    frame_h = _mult16(height)
+    try:
+        framed = cover_resize(pil, frame_w, frame_h)
+    except Exception as e:
+        raise gr.Error(f"Could not prepare the still: {e}") from e
+    img_path = sess / "input.png"
+    framed.save(img_path)
 
     progress(0.05, desc="Downloading template…")
     driving = download_template_video(str(template_id), sess)
 
     # Cap driving seconds — demos are ~4s; keep default low to spare ZeroGPU.
     max_seconds = min(float(max_seconds or 3.0), 5.0)
+    use_prompt = (prompt or DEFAULT_PROMPT).strip() or DEFAULT_PROMPT
+    if "reference" not in use_prompt.lower():
+        use_prompt = "the person in the reference photo, same face and clothes, " + use_prompt
 
     progress(0.1, desc="Animating (become the character)…")
     try:
         clip = call_animate(
             img_path,
             driving,
-            prompt or DEFAULT_PROMPT,
+            use_prompt,
             max_seconds,
-            int(height),
-            int(width),
+            frame_h,
+            frame_w,
             int(steps),
             float(guidance),
             float(sample_shift),
@@ -658,6 +701,13 @@ def do_generate(
     except Exception as e:
         raise gr.Error(_friendly_upstream_error(e, "Animate")) from e
 
+    if _sha256_file(Path(clip)) == _sha256_file(driving):
+        raise gr.Error(
+            "Animate returned the template clip unchanged, so your still was not applied. "
+            "That clip was not saved as a result. Wait 10–15 minutes and try Generate once."
+        )
+    _refuse_junk(clip, "Animate")
+
     out = sess / "current.mp4"
     shutil.copy2(clip, out)
     last = extract_last_frame(out, sess / "last_frame")
@@ -665,14 +715,16 @@ def do_generate(
     state["segments"] = [str(clip)]
     state["video"] = str(out)
     state["last_frame"] = str(last)
-    state["prompt"] = prompt or DEFAULT_PROMPT
+    state["prompt"] = use_prompt
     state["template_id"] = str(template_id)
     sid = _save_session(state)
     progress(1.0, desc="Done")
     return (
         str(out),
         str(out),
-        status_line(state["segments"], dur) + f"  ·  session `{sid}`",
+        status_line(state["segments"], dur)
+        + f"  ·  reference {framed.size[0]}×{framed.size[1]}"
+        + f"  ·  session `{sid}`",
         str(last),
         sid,
         state,
@@ -725,6 +777,8 @@ def do_extend(
         )
     except Exception as e:
         raise gr.Error(_friendly_upstream_error(e, "Extend")) from e
+
+    _refuse_junk(clip, "Extend")
 
     segs = [Path(p) for p in state["segments"]] + [clip]
     out = sess / f"current_{len(segs)}.mp4"
@@ -820,7 +874,7 @@ HOWTO_MD = """
 2. **Tap Select this motion** on the clip you want. Nothing is generated yet.
 3. **Upload a still** of the person who should become the character (JPG or PNG, face or full body). The upload stays locked until a template is selected.
 4. Optionally edit the prompt or open **Animate settings**.
-5. Tap **Generate — become the character**. Wan Animate runs on ZeroGPU. When the queue is busy this often takes 1–3+ minutes. You get a short clip of that person in the template motion.
+5. Tap **Generate — become the character**. Wan Animate runs on ZeroGPU. A run usually takes several minutes, and a busy queue can take longer than 10. Leave this tab open. You get a short clip of that person in the template motion.
 6. Optionally **Extend** once, or **Auto-extend** toward a target length. Stay in this same browser session so the session id is kept. Extend chains from the last frame (same pattern as wan22-extend).
 7. If you see a rate limit, 429, or “failed too many attempts”: wait 10–15 minutes and press Generate **once**. Do not retry in a loop — each attempt uses ZeroGPU quota.
 

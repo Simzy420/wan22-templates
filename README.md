@@ -95,19 +95,73 @@ Do not press Generate while checking the UI. That spends ZeroGPU.
 
 ## Deploy on Netlify
 
-The Netlify function is still there and uses the same proxy code
-(`server/gradioProxy.js`). `netlify.toml` sends `/api/*` to
-`netlify/functions/generate.js`.
+The phone site https://swapr-casey.netlify.app is this repo on Netlify (custom
+site name, not the repo name). `netlify.toml` sends `/api/*` to
+`netlify/functions/`.
 
-1. In Netlify: **Add new site → Import an existing project → GitHub**.
-2. Select repo **`Simzy420/wan22-templates`**.
-3. Build settings (usually auto-detected from `netlify.toml`):
-   - Build command: `npm run build`
-   - Publish directory: `dist`
-4. Site env vars:
-   - `HF_SPACE_URL` = `https://simzy-wan-2-2-templates.hf.space`
-   - `HF_TOKEN` = your HF token (optional, server-side only)
-5. Deploy. Keep `USE_PROXY: true` in `public/config.js`.
+Synchronous Netlify functions stop at **60 seconds**. That cap is not
+configurable (there is no env var or `netlify.toml` timeout that raises it).
+Background functions stop at **15 minutes**, also a platform cap.
+Wan Animate usually takes longer than 60 seconds and sends no bytes on the
+browser request while it runs, so the gateway answers with an HTML page
+(`Inactivity Timeout` / “Too much time has passed without sending any data”).
+Generate must not wait inside the synchronous function:
+
+1. `POST /api/generate` uploads the still (20s cap) and returns
+   `{ job_id, phase: "queued" }` (HTTP 202) well inside the 60s limit.
+2. It starts `generate-background` and only waits for the **202 headers**
+   (8s cap). It does not read the worker body.
+3. `netlify.toml` sets `[functions."generate-background"] background = true`
+   (the `-background` filename does the same). That worker holds the Gradio
+   queue for up to 15 minutes and writes the result.
+4. The page polls `GET /api/job?id=...` for up to 14 minutes until `phase`
+   is `done` or `error`.
+
+A missing still is JSON **400**. A Space failure, including a color-noise or
+near-black clip, is JSON with `phase: "error"` and no video URL. An HTML
+gateway timeout is turned into that same kind of sentence, never shown raw.
+The function must not exit 1.
+
+`URL` is set by Netlify and is how `/api/generate` starts the background
+worker. Do not invent that value locally.
+
+### Environment variables
+
+Set these on the **swapr-casey** site (**Site configuration → Environment
+variables**). Do not commit them. The Vercel project’s variables are not
+copied here.
+
+| Name | Required | Purpose |
+|------|----------|---------|
+| `HF_TOKEN` | Recommended | Hugging Face token, server-side only. Sent as `Authorization` when the proxy calls the Space. |
+| `HF_SPACE_URL` | No | Default `https://simzy-wan-2-2-templates.hf.space` |
+| `URL` | Set by Netlify | Site origin used to invoke `generate-background`. |
+
+Also set Space secret `HF_TOKEN` on https://huggingface.co/spaces/Simzy/Wan-2.2-templates
+(**Settings → Secrets**) so the Space can call upstream ZeroGPU with Pro quota.
+That secret is separate from the Netlify variable.
+
+### After this merges
+
+GitHub does not publish the custom Netlify site by itself unless that site is
+already linked to this repo.
+
+1. Merge to **`main`**.
+2. In Netlify, open the **swapr-casey** site → **Deploys**.
+3. If a deploy from `main` does not start on its own: **Trigger deploy →
+   Clear cache and deploy site**.
+4. There is no timeout field to raise. **Site configuration → Functions**
+   cannot set a synchronous function above 60 seconds. After this deploy,
+   **Functions** should list `generate-background` as a background function
+   (15 minutes). `generate` and `job` stay synchronous and must return
+   immediately.
+5. Confirm the new deploy is **Published** before testing on the phone.
+6. On the phone, close the old tab and open https://swapr-casey.netlify.app
+   again so it loads the new page.
+7. Push `space/` to the Hugging Face Space (next section). GitHub does not
+   update the Space.
+
+Build settings from `netlify.toml`: command `npm run build`, publish `dist`.
 
 ## Product flow
 
@@ -125,12 +179,19 @@ Templates are the real ~4s clips in `Simzy/wan22-template-clips` (`demo-wave`, `
 
 The live Space (https://huggingface.co/spaces/Simzy/Wan-2.2-templates) is **HF-git only**. It is not deployed from this GitHub repo automatically. `space/app.py` here matches that proxy app, plus the gallery and how-to panel. API routes are unchanged: `/generate`, `/extend`, `/auto_extend`, `/reset`, `/list_templates`.
 
+Generate on the Space resizes the still to the Animate frame (multiples of 16,
+at least 320px) and anchors the prompt to that reference photo. If upstream
+returns color noise, a near-black clip, or a file that cannot be read,
+`space/clip_quality.py` raises an error **before** that file is saved as the
+result. The phone then shows that error from `/api/job` instead of playing
+the junk mp4.
+
 To update what Casey can open today, push this repo’s `space/` folder to the HF Space repo:
 
 ```bash
 git clone https://huggingface.co/spaces/Simzy/Wan-2.2-templates hf-space
-cp space/app.py space/requirements.txt space/README.md hf-space/
-cd hf-space && git add app.py requirements.txt README.md && git commit -m "Autoplay gallery and how-to" && git push
+cp space/app.py space/clip_quality.py space/requirements.txt space/README.md hf-space/
+cd hf-space && git add app.py clip_quality.py requirements.txt README.md && git commit -m "Reject degenerate Wan clips instead of returning them" && git push
 ```
 
 Use a Hugging Face write token. Do not click Generate on the Space while checking the UI — that spends ZeroGPU.

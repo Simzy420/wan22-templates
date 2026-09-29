@@ -25,6 +25,11 @@ covers the pick → upload → generate/extend flow and how to add a 3–5s clip
 
 API routes are unchanged: `/generate`, `/extend`, `/auto_extend`, `/reset`, `/list_templates`.
 
+`/generate` frames the uploaded still to the requested width and height before
+calling upstream Animate. If that call returns color noise, a near-black clip,
+or an unreadable file, the Space raises an error and does not save it as the
+result. The same check runs on each Extend segment.
+
 ## Usage tip (quota)
 
 If you hit **failed too many attempts** / **429** / queue timeout: **wait 10–15 minutes**

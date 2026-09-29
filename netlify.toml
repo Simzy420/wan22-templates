@@ -3,6 +3,11 @@
   publish = "dist"
   functions = "netlify/functions"
 
+# Platform caps (not configurable): synchronous functions 60s, background 15 min.
+# Generate must return a job id from the sync function. Wan runs in the background worker.
+[functions."generate-background"]
+  background = true
+
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"

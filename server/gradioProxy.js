@@ -5,11 +5,22 @@
  * POST multipart: api, payload (JSON string), optional photo file.
  * POST JSON: { api, payload }.
  *
- * Calls the Hugging Face Space with @gradio/client on the server so the
+ * Calls the Hugging Face Space with a fetch-only Gradio queue client so the
  * phone browser never makes a cross-origin Gradio request.
  */
-import { Client } from "@gradio/client";
+import { publicErrorText } from "./gatewayError.js";
+import { createGradioHttpClient } from "./gradioHttp.js";
 import { absolutizeSpaceUrl, DEFAULT_SPACE, rewriteSpaceVideoUrl } from "./videoUrl.js";
+
+// The old Gradio JS client rejected inside an async Promise executor, and Node
+// exited with status 1 (Netlify Runtime.ExitError). Keep that from taking the
+// function down if a dependency does it again.
+if (typeof process !== "undefined" && process.on && !globalThis.__wan22RejectionGuard) {
+  globalThis.__wan22RejectionGuard = true;
+  process.on("unhandledRejection", (reason) => {
+    console.error("unhandledRejection", reason);
+  });
+}
 
 export { absolutizeSpaceUrl, DEFAULT_SPACE };
 
@@ -78,13 +89,13 @@ export function mapPredictResult(result, space = DEFAULT_SPACE) {
 
 export function errorMessage(error) {
   if (!error) return "Unknown error";
-  if (typeof error === "string") return error;
-  if (typeof error.message === "string" && error.message) return error.message;
-  if (typeof error.error === "string" && error.error) return error.error;
+  if (typeof error === "string") return publicErrorText(error);
+  if (typeof error.message === "string" && error.message) return publicErrorText(error.message);
+  if (typeof error.error === "string" && error.error) return publicErrorText(error.error);
   try {
-    return JSON.stringify(error);
+    return publicErrorText(JSON.stringify(error));
   } catch {
-    return String(error);
+    return publicErrorText(String(error));
   }
 }
 
@@ -156,20 +167,25 @@ async function readRequest(request) {
 }
 
 async function defaultConnect(space, token) {
-  const options = {};
-  if (token) options.hf_token = token;
-  return Client.connect(space, options);
+  return createGradioHttpClient({ space, token: token || undefined });
 }
 
-export async function callSpaceApi({ api, payload, photo, env = process.env, connect } = {}) {
+export async function callSpaceApi({ api, payload, photo, env = process.env, connect, timeoutMs } = {}) {
   const space = (env.HF_SPACE_URL || DEFAULT_SPACE).trim() || DEFAULT_SPACE;
   const token = env.HF_TOKEN && String(env.HF_TOKEN).trim();
   const apiName = normalizeApi(api);
   const connectFn = connect || ((spaceUrl, hfToken) => defaultConnect(spaceUrl, hfToken));
   const client = await connectFn(space, token || undefined);
   const args = buildPredictArgs(payload, photo);
-  const result = await client.predict(apiName, args);
-  return mapPredictResult(result, space);
+  const result = await client.predict(apiName, args, { timeoutMs: timeoutMs ?? 270000 });
+  const mapped = mapPredictResult(result, space);
+  if (!mapped.video) {
+    throw new ProxyError(
+      "The Space finished without a video, so your still was not returned as a clip. Nothing was substituted.",
+      502
+    );
+  }
+  return mapped;
 }
 
 export async function handleGenerateRequest(request, deps = {}) {
@@ -182,12 +198,21 @@ export async function handleGenerateRequest(request, deps = {}) {
 
   try {
     const { api, payload, photo } = await readRequest(request);
+    if (api === "/generate" && !photo) {
+      throw new ProxyError("Upload a still photo of the person who should do this motion.", 400);
+    }
+    const env = deps.env || process.env;
+    if (typeof deps.enqueue === "function") {
+      const queued = await deps.enqueue({ api, payload, photo, env });
+      return jsonResponse(queued, 202);
+    }
     const data = await callSpaceApi({
       api,
       payload,
       photo,
-      env: deps.env || process.env,
+      env,
       connect: deps.connect,
+      timeoutMs: deps.timeoutMs,
     });
     return jsonResponse(data, 200);
   } catch (error) {
