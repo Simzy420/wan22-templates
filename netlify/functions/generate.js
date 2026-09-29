@@ -2,16 +2,20 @@
  * POST /api/generate
  *
  * Synchronous Netlify functions stop at 60s, and Wan Animate takes longer.
- * This function uploads the still, returns a job id, and starts
- * generate-background.js, which waits on the Space. Poll GET /api/job?id=.
+ * This function stores the still, returns a job id, and starts
+ * generate-background.js. That worker polls Runpod when RUNPOD_API_KEY and
+ * RUNPOD_ENDPOINT_ID are set. Poll GET /api/job?id= and play GET /api/result.
  *
- * A missing still is a JSON 400. Gradio failures are JSON too — the function
- * must not exit 1.
+ * A missing still is a JSON 400. Runpod and Gradio failures are JSON too —
+ * the function must not exit 1.
  *
  * Env (site settings, not committed):
- *   HF_TOKEN      recommended so the Space call is authenticated
- *   HF_SPACE_URL  optional, default https://simzy-wan-2-2-templates.hf.space
- *   URL           set by Netlify; used to start the background worker
+ *   RUNPOD_API_KEY       server-side only; required for Generate
+ *   RUNPOD_ENDPOINT_ID   required for Generate (swapr-wan-animate)
+ *   RUNPOD_ENDPOINT_URL  optional https://api.runpod.ai/v2/<id>
+ *   HF_GENERATE_FALLBACK set true only to send Generate to the Space when Runpod env is absent
+ *   HF_TOKEN             used for Extend and /api/video, not the Runpod happy path
+ *   URL                  set by Netlify; used to start the background worker
  */
 import { handleGenerateRequest, errorMessage } from "../../server/gradioProxy.js";
 import { enqueueGenerateJob } from "../../server/jobs.js";

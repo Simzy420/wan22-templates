@@ -29,7 +29,11 @@ describe("generate jobs", () => {
         photo: new File([Uint8Array.from([1, 2, 3])], "me.jpg", { type: "image/jpeg" }),
       },
       {
-        env: { HF_SPACE_URL: "https://simzy-wan-2-2-templates.hf.space", URL: "https://swapr-casey.netlify.app" },
+        env: {
+          HF_SPACE_URL: "https://simzy-wan-2-2-templates.hf.space",
+          URL: "https://swapr-casey.netlify.app",
+          HF_GENERATE_FALLBACK: "true",
+        },
         store,
         upload: async (file) => ({
           path: "/tmp/gradio/me.jpg",

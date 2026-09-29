@@ -1,10 +1,11 @@
 # wan22-templates — Become the Character
 
 Phone-first dark UI for Casey Sims (Simzy): scroll template videos → pick one →
-upload a still of yourself → call the Hugging Face Space to animate you into
-that template.
+upload a still of yourself → Wan Animate puts you in that motion.
 
-**Live site:** https://wan22-templates.vercel.app
+**Phone site:** https://swapr-casey.netlify.app (Generate uses Runpod)
+
+**Vercel UI:** https://wan22-templates.vercel.app (synchronous Space proxy)
 
 **Not** a LoRA trainer. No “upload 10–20 training videos” flow.
 
@@ -12,6 +13,8 @@ that template.
 
 | Piece | URL |
 |-------|-----|
+| Phone UI (Netlify) | https://swapr-casey.netlify.app |
+| Runpod endpoint | `zrmwpir4qzs66s` (`swapr-wan-animate`) — `https://api.runpod.ai/v2/zrmwpir4qzs66s` |
 | Phone UI (Vercel) | https://wan22-templates.vercel.app |
 | HF Space (Gradio API) | https://simzy-wan-2-2-templates.hf.space |
 | Space repo | https://huggingface.co/spaces/Simzy/Wan-2.2-templates |
@@ -20,20 +23,23 @@ that template.
 
 ## Why Generate posts to `/api/generate`
 
-iPhone Safari blocks the page from calling the Hugging Face Space with
-`@gradio/client` (`TypeError: Load failed`). `public/config.js` sets
-`USE_PROXY: true`, so **Generate, Extend, and Auto-extend** POST to the
-same-origin route `/api/generate`. That route runs `@gradio/client` on the
-server.
+iPhone Safari blocks the page from calling Hugging Face or Runpod directly.
+`public/config.js` sets `USE_PROXY: true`, so **Generate, Extend, and
+Auto-extend** POST to the same-origin route `/api/generate`. The API key stays
+on the server. The phone never sees `RUNPOD_API_KEY` or `HF_TOKEN`.
 
-`USE_PROXY` must stay **`true`** for browser CORS. `false` makes the phone UI
-call `https://simzy-wan-2-2-templates.hf.space` directly and Safari fails again.
+On **swapr-casey**, Generate submits the still (`image_base64`) and the
+selected template motion (`video_url`, a public Hugging Face dataset URL) to
+the Runpod Wan Animate endpoint, then polls that job from the background
+function. The mp4 comes back as base64. The site stores it and the phone plays
+`/api/result?id=...` on the same origin, including `Range`.
 
-The result file still lives on the Space. Safari often shows a broken player
-(duration 00:00, blurry frames) when `<video>` loads that host directly.
-`/api/generate` rewrites `video` and `url` to same-origin
-`/api/video?url=...`, and the page does the same rewrite if a Space URL
-slips through. `/api/video` streams the bytes and forwards `Range`.
+`USE_PROXY` must stay **`true`**. `false` makes the phone UI call the Space
+directly and Safari fails again.
+
+Space files (Extend) are still rewritten to `/api/video?url=...`. Safari shows
+a broken player when `<video>` loads the Space host directly. `/api/video`
+streams those bytes and forwards `Range`.
 
 After this deploys, hard-close the phone tab, open the site again, then
 Generate. Do not keep the old tab.
@@ -91,7 +97,9 @@ export HF_TOKEN=   # server-side only; leave unset to call the Space anonymously
 
 `VITE_HF_SPACE` is only used when `USE_PROXY` is false.
 
-Do not press Generate while checking the UI. That spends ZeroGPU.
+Do not press Generate on the Vercel dev server while checking the UI. That path
+still calls the Space and spends ZeroGPU. The Netlify phone site spends Runpod
+credits instead.
 
 ## Deploy on Netlify
 
@@ -107,20 +115,30 @@ browser request while it runs, so the gateway answers with an HTML page
 (`Inactivity Timeout` / “Too much time has passed without sending any data”).
 Generate must not wait inside the synchronous function:
 
-1. `POST /api/generate` uploads the still (20s cap) and returns
+1. `POST /api/generate` reads the still and returns
    `{ job_id, phase: "queued" }` (HTTP 202) well inside the 60s limit.
+   It does not call Runpod in this function.
 2. It starts `generate-background` and only waits for the **202 headers**
    (8s cap). It does not read the worker body.
 3. `netlify.toml` sets `[functions."generate-background"] background = true`
-   (the `-background` filename does the same). That worker holds the Gradio
-   queue for up to 15 minutes and writes the result.
-4. The page polls `GET /api/job?id=...` for up to 14 minutes until `phase`
-   is `done` or `error`.
+   (the `-background` filename does the same). That worker `POST`s `/run`,
+   then polls `/status/{id}` until `COMPLETED`, `FAILED`, or 14 minutes.
+   The worker scales to zero (`workersMin` 0), so the first Generate after
+   idle includes a cold start and can take several minutes. The page says so.
+4. On success the worker stores the mp4 and the page polls
+   `GET /api/job?id=...` until `phase` is `done` or `error`. `done` includes
+   `video: "/api/result?id=..."`, which the player loads same-origin.
 
-A missing still is JSON **400**. A Space failure, including a color-noise or
-near-black clip, is JSON with `phase: "error"` and no video URL. An HTML
-gateway timeout is turned into that same kind of sentence, never shown raw.
-The function must not exit 1.
+A missing still is JSON **400**. Runpod failures are JSON with `phase: "error"`
+and no video URL. Out of credits, a rejected API key, and a job that finishes
+without a video each get a short sentence. An HTML gateway timeout is turned
+into that same kind of sentence, never shown raw. The function must not exit 1.
+
+Extend and Auto-extend still call the Hugging Face Space from the background
+worker. They cannot continue a clip that Generate made on Runpod. Set
+`HF_GENERATE_FALLBACK=true` only if Generate should use the Space when
+`RUNPOD_API_KEY` and `RUNPOD_ENDPOINT_ID` are both absent. When those two are
+set, Generate uses Runpod.
 
 `URL` is set by Netlify and is how `/api/generate` starts the background
 worker. Do not invent that value locally.
@@ -133,9 +151,15 @@ copied here.
 
 | Name | Required | Purpose |
 |------|----------|---------|
-| `HF_TOKEN` | Recommended | Hugging Face token, server-side only. Sent as `Authorization` when the proxy calls the Space. |
+| `RUNPOD_API_KEY` | Yes for Generate | Server-side only. `Authorization: Bearer` on `/run` and `/status`. Never put this in the frontend or in git. |
+| `RUNPOD_ENDPOINT_ID` | Yes for Generate | `zrmwpir4qzs66s` (`swapr-wan-animate`). |
+| `RUNPOD_ENDPOINT_URL` | No | Base URL. Default `https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID`. Must be `https://api.runpod.ai/...`. |
+| `HF_GENERATE_FALLBACK` | No | `true` sends Generate to the Space only when the Runpod key and endpoint id are absent. |
+| `HF_TOKEN` | No | Server-side only. Used for Extend and `/api/video`, not the Runpod Generate path. |
 | `HF_SPACE_URL` | No | Default `https://simzy-wan-2-2-templates.hf.space` |
 | `URL` | Set by Netlify | Site origin used to invoke `generate-background`. |
+
+These Runpod variables are already set on **swapr-casey**. Do not commit the key.
 
 Also set Space secret `HF_TOKEN` on https://huggingface.co/spaces/Simzy/Wan-2.2-templates
 (**Settings → Secrets**) so the Space can call upstream ZeroGPU with Pro quota.
@@ -144,22 +168,25 @@ That secret is separate from the Netlify variable.
 ### After this merges
 
 GitHub does not publish the custom Netlify site by itself unless that site is
-already linked to this repo.
+already linked to this repo. **Casey (or CoS) needs to clear the cache and
+redeploy** so the published functions are this Generate path, not a stale bundle.
 
 1. Merge to **`main`**.
 2. In Netlify, open the **swapr-casey** site → **Deploys**.
-3. If a deploy from `main` does not start on its own: **Trigger deploy →
-   Clear cache and deploy site**.
+3. **Trigger deploy → Clear cache and deploy site.** Do this even if a deploy
+   from `main` starts on its own, so the new functions replace the cached ones.
 4. There is no timeout field to raise. **Site configuration → Functions**
    cannot set a synchronous function above 60 seconds. After this deploy,
    **Functions** should list `generate-background` as a background function
-   (15 minutes). `generate` and `job` stay synchronous and must return
-   immediately.
-5. Confirm the new deploy is **Published** before testing on the phone.
+   (15 minutes) plus synchronous `generate`, `job`, and `result`.
+5. Confirm the new deploy is **Published**, and that `RUNPOD_API_KEY`,
+   `RUNPOD_ENDPOINT_ID`, and `RUNPOD_ENDPOINT_URL` are still present. Do not
+   copy the key into the repo.
 6. On the phone, close the old tab and open https://swapr-casey.netlify.app
-   again so it loads the new page.
-7. Push `space/` to the Hugging Face Space (next section). GitHub does not
-   update the Space.
+   again so it loads the new page. The first Generate may take several minutes
+   while the Runpod worker starts.
+7. Pushing `space/` is only required for Extend and the Space UI. Generate on
+   swapr-casey does not call that Space.
 
 Build settings from `netlify.toml`: command `npm run build`, publish `dist`.
 
@@ -168,9 +195,9 @@ Build settings from `netlify.toml`: command `npm run build`, publish `dist`.
 1. Horizontal gallery of catalog clips. Visible and nearby videos autoplay **muted**, **looped**, and **playsInline** (iPhone Safari). Offscreen clips stay unloaded until you scroll near them.
 2. Tap a template. The still upload stays locked until that pick, then the page focuses the upload card.
 3. Dashed upload zone for a still photo.
-4. **Generate** → Space `/generate` (animate). Same arguments as before, including `session_id`. With `USE_PROXY: true` the browser posts that payload to `/api/generate`.
-5. Result player + download. The proxy response includes `session_id` for the next step.
-6. Optional Extend / Auto-extend (`/extend`, `/auto_extend`) through the same `/api/generate` route when `USE_PROXY` is true.
+4. **Generate** posts the still and the template `video_url` to same-origin `/api/generate`. On swapr-casey that becomes a Runpod `/run` (`image_base64`, `video_url`, 832×480, 16 fps, cfg 1, 6 steps, `mode: replace`). The page polls `/api/job` and plays `/api/result`.
+5. Result player + download from that same-origin mp4.
+6. Optional Extend / Auto-extend still go through `/api/generate` to the Space. They do not continue a Runpod clip.
 7. **How to use & create templates** opens step-by-step instructions for both flows.
 
 Templates are the real ~4s clips in `Simzy/wan22-template-clips` (`demo-wave`, `demo-dance`, `demo-victory`, `demo-walk`). Add a new one by putting `templates/<id>.mp4` in that dataset and appending an object to `templates/catalog.json` (about 3–5 seconds, stable id, license in `source`). Then Refresh. This is not a LoRA training upload.

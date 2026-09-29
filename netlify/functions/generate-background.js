@@ -2,9 +2,9 @@
  * Background worker (filename suffix -background). Netlify returns 202 to the
  * caller immediately and lets this run for up to 15 minutes.
  *
- * Always resolves successfully so the platform does not retry the GPU call.
- * Synchronous functions cannot be raised past 60 seconds. This file is the
- * 15-minute worker. netlify.toml also sets background = true.
+ * Generate polls Runpod until COMPLETED, then stores the mp4 for /api/result.
+ * Extend still calls the Space. Always resolves successfully so the platform
+ * does not retry the GPU call. netlify.toml also sets background = true.
  */
 import { netlifyJobStore, runBackgroundJob, memoryJobStore } from "../../server/jobs.js";
 
@@ -28,7 +28,10 @@ export async function handler(event, context) {
         store,
         connect: context?.connect,
         env: context?.env || process.env,
+        fetch: context?.fetch,
         timeoutMs: context?.timeoutMs,
+        intervalMs: context?.intervalMs,
+        sleep: context?.sleep,
       });
     }
   } catch (error) {

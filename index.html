@@ -60,7 +60,7 @@
 
       <section class="section actions">
         <button type="button" id="btn-generate" class="primary" disabled>Generate</button>
-        <p class="muted">ZeroGPU usually takes several minutes, and a busy queue can take longer than 10. Leave this tab open after you tap Generate.</p>
+        <p class="muted">The first Generate may take several minutes while the Runpod worker starts. Later runs are faster. Leave this tab open after you tap Generate.</p>
         <p id="gen-status" class="muted" aria-live="polite"></p>
       </section>
 
@@ -75,7 +75,7 @@
 
         <details class="extend-box">
           <summary>Extend for a longer clip</summary>
-          <p class="muted">Chains extra I2V segments via the Space (ZeroGPU queue).</p>
+          <p class="muted">Extend still uses the Hugging Face Space and cannot continue a Runpod clip.</p>
           <label class="field">Target seconds
             <input type="range" id="extend-target" min="8" max="22" value="12" />
             <span id="extend-target-val">12s</span>
@@ -88,7 +88,7 @@
       </section>
 
       <footer class="foot muted">
-        Powered by Wan 2.2 on Hugging Face ZeroGPU · real ~4s motion templates
+        Powered by Wan Animate on Runpod · real ~4s motion templates
       </footer>
     </div>
 
@@ -104,15 +104,15 @@
         <li><strong>Tap a motion</strong> to select it. Nothing is generated yet.</li>
         <li><strong>Upload a still</strong> of the person who should become the character (JPG or PNG, face or full body). The upload stays locked until a template is selected.</li>
         <li>Optionally edit the prompt.</li>
-        <li>Tap <strong>Generate</strong>. Wan Animate runs on ZeroGPU. A run usually takes several minutes, and a busy queue can take longer than 10. Leave this tab open. You get a short clip of that person in the template motion.</li>
-        <li>Optionally <strong>Extend once</strong> or <strong>Auto-extend</strong> for a longer clip. Stay in this browser tab so the session id is kept. Extend chains from the last frame.</li>
-        <li>If you see a rate limit or “failed too many attempts”, wait 10–15 minutes and press Generate once. Each retry uses ZeroGPU quota.</li>
+        <li>Tap <strong>Generate</strong>. Wan Animate runs on Runpod using your still and the selected motion. The first Generate may take several minutes while the worker starts (it scales to zero when idle). Leave this tab open. You get a short clip of that person in the template motion.</li>
+        <li>Optionally <strong>Extend once</strong> or <strong>Auto-extend</strong> for a longer clip. Extend uses the Hugging Face Space and cannot continue a clip that Generate made on Runpod.</li>
+        <li>If Generate says Runpod is out of credits, add credits on the Runpod account and try once. If the worker was idle, wait for it to finish starting instead of tapping Generate again.</li>
       </ol>
 
       <h3>Create a new template</h3>
       <p>A template is <strong>one short real person-motion driving clip</strong>. This is not a LoRA trainer and does not take a folder of training videos.</p>
       <ol>
-        <li><strong>Length:</strong> about <strong>3–5 seconds</strong>. Today’s clips (<code>demo-wave</code>, <code>demo-dance</code>, <code>demo-victory</code>, <code>demo-walk</code>) are <strong>4.0s</strong>. Generate uses at most <strong>5 seconds</strong> of the driving video (default <strong>3s</strong>) to spare ZeroGPU quota.</li>
+        <li><strong>Length:</strong> about <strong>3–5 seconds</strong>. Today’s clips (<code>demo-wave</code>, <code>demo-dance</code>, <code>demo-victory</code>, <code>demo-walk</code>) are <strong>4.0s</strong>. Generate sends that public motion clip to Runpod with your still.</li>
         <li><strong>Picture:</strong> one person, motion that reads clearly (wave, dance, walk, gesture). MP4, H.264. Prefer a stable camera and a readable face or full body.</li>
         <li><strong>Id:</strong> lowercase, hyphens, stable once published, for example <code>demo-wave</code>. Do not reuse an existing id unless you mean to replace that motion.</li>
         <li>

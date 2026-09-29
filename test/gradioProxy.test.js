@@ -301,8 +301,13 @@ describe("phone UI wiring", () => {
     assert.match(main, /callSpace\("\/generate"/);
     assert.match(main, /image\/jpeg/);
     assert.match(main, /publicErrorText/);
-    assert.match(main, /longer than 10/);
+    assert.match(main, /video_url/);
+    assert.match(main, /several minutes/);
+    assert.match(main, /Runpod/);
+    assert.match(main, /\/api\/result/);
     assert.doesNotMatch(main, /60 seconds/);
+    const page = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+    assert.match(page, /first Generate may take several minutes/);
     const toml = readFileSync(new URL("../netlify.toml", import.meta.url), "utf8");
     assert.match(toml, /\[functions\."generate-background"\]/);
     assert.match(toml, /background = true/);
