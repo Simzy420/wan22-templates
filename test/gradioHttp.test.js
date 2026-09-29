@@ -17,6 +17,21 @@ describe("gradio http protocol", () => {
     assert.equal(parsed.rest.includes("partial"), true);
   });
 
+  it("keeps a degenerate-clip error string for the JSON response", () => {
+    const outcome = outcomeFromMessage({
+      msg: "process_completed",
+      success: false,
+      output: {
+        error:
+          "Animate returned color noise instead of a subject, so that clip was not saved. Wait 10–15 minutes and try once.",
+      },
+      title: "Error",
+    });
+    assert.equal(outcome.ok, false);
+    assert.match(outcome.error, /color noise/);
+    assert.equal(outcome.data, undefined);
+  });
+
   it("turns a null Space error into an honest failure", () => {
     const outcome = outcomeFromMessage({
       msg: "process_completed",

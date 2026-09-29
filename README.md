@@ -108,8 +108,9 @@ takes longer, so Generate does not wait inside `/api/generate`:
    15 minutes) holds the Gradio queue stream and writes the result.
 3. The page polls `GET /api/job?id=...` until `phase` is `done` or `error`.
 
-A missing still is JSON **400**. A Space failure is JSON with `phase: "error"`.
-The function must not exit 1, and it must not substitute the template clip.
+A missing still is JSON **400**. A Space failure, including a color-noise or
+near-black clip, is JSON with `phase: "error"` and no video URL. The function
+must not exit 1.
 
 `URL` is set by Netlify and is how `/api/generate` starts the background
 worker. Do not invent that value locally.
@@ -164,16 +165,18 @@ Templates are the real ~4s clips in `Simzy/wan22-template-clips` (`demo-wave`, `
 The live Space (https://huggingface.co/spaces/Simzy/Wan-2.2-templates) is **HF-git only**. It is not deployed from this GitHub repo automatically. `space/app.py` here matches that proxy app, plus the gallery and how-to panel. API routes are unchanged: `/generate`, `/extend`, `/auto_extend`, `/reset`, `/list_templates`.
 
 Generate on the Space resizes the still to the Animate frame (multiples of 16,
-at least 320px), anchors the prompt to that reference photo, and **refuses**
-the result when it is byte-for-byte the driving template. That refusal is an
-error, not a silent passthrough.
+at least 320px) and anchors the prompt to that reference photo. If upstream
+returns color noise, a near-black clip, or a file that cannot be read,
+`space/clip_quality.py` raises an error **before** that file is saved as the
+result. The phone then shows that error from `/api/job` instead of playing
+the junk mp4.
 
 To update what Casey can open today, push this repo’s `space/` folder to the HF Space repo:
 
 ```bash
 git clone https://huggingface.co/spaces/Simzy/Wan-2.2-templates hf-space
-cp space/app.py space/requirements.txt space/README.md hf-space/
-cd hf-space && git add app.py requirements.txt README.md && git commit -m "Bind the still into Animate and reject template passthrough" && git push
+cp space/app.py space/clip_quality.py space/requirements.txt space/README.md hf-space/
+cd hf-space && git add app.py clip_quality.py requirements.txt README.md && git commit -m "Reject degenerate Wan clips instead of returning them" && git push
 ```
 
 Use a Hugging Face write token. Do not click Generate on the Space while checking the UI — that spends ZeroGPU.

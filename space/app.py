@@ -27,6 +27,7 @@ from typing import Any
 import cv2
 import gradio as gr
 import numpy as np
+from clip_quality import assess_video
 from gradio_client import Client, handle_file
 from huggingface_hub import hf_hub_download, list_repo_files
 from PIL import Image, ImageOps
@@ -598,6 +599,19 @@ def call_wan_i2v(
     return dest
 
 
+def _refuse_junk(path: str | Path, action: str) -> None:
+    """Raise before a mush, near-black, or unreadable file is saved as the result."""
+    try:
+        reason = assess_video(path, action)
+    except Exception as e:
+        raise gr.Error(
+            f"{action} returned a clip that could not be checked, so it was not saved. "
+            "Wait 10–15 minutes and try once."
+        ) from e
+    if reason:
+        raise gr.Error(reason)
+
+
 def status_line(segments: list[str], duration_est: float) -> str:
     n = len(segments)
     # HF_TOKEN / HUGGING_FACE_HUB_TOKEN is the Space secret (Pro quota when eligible).
@@ -692,6 +706,7 @@ def do_generate(
             "Animate returned the template clip unchanged, so your still was not applied. "
             "That clip was not saved as a result. Wait 10–15 minutes and try Generate once."
         )
+    _refuse_junk(clip, "Animate")
 
     out = sess / "current.mp4"
     shutil.copy2(clip, out)
@@ -762,6 +777,8 @@ def do_extend(
         )
     except Exception as e:
         raise gr.Error(_friendly_upstream_error(e, "Extend")) from e
+
+    _refuse_junk(clip, "Extend")
 
     segs = [Path(p) for p in state["segments"]] + [clip]
     out = sess / f"current_{len(segs)}.mp4"
