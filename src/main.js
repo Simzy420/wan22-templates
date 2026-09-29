@@ -17,8 +17,9 @@ const CDN_BASE =
   cfg.DATASET_CDN_BASE ||
   "https://huggingface.co/datasets/Simzy/wan22-template-clips/resolve/main/";
 const USE_PROXY = cfg.USE_PROXY === true;
-const WAIT_COPY =
-  "ZeroGPU usually takes several minutes, and a busy queue can take longer than 10. Leave this tab open.";
+const GENERATE_WAIT =
+  "The first Generate may take several minutes while the Runpod worker starts. Leave this tab open.";
+const EXTEND_WAIT = "Extend uses the Hugging Face Space and can take several minutes. Leave this tab open.";
 
 let templates = [];
 let selectedId = null;
@@ -342,8 +343,10 @@ async function photoForUpload(file) {
 }
 
 function generateArgs() {
+  const selected = templates.find((t) => t.id === selectedId);
   return {
     template_id: selectedId,
+    video_url: selected ? videoUrl(selected) : "",
     prompt: els.prompt.value || "a person, natural motion, cinematic, high quality",
     max_seconds: 3,
     height: 480,
@@ -379,7 +382,11 @@ function sleep(ms) {
 }
 
 /** Netlify starts the Wan run in the background and the page polls /api/job. */
-async function pollJob(jobId) {
+async function pollJob(jobId, apiName) {
+  const extend = apiName === "/extend" || apiName === "/auto_extend";
+  const wait = extend ? EXTEND_WAIT : GENERATE_WAIT;
+  const queued = extend ? `Queued on the Space… ${wait}` : `Queued on Runpod… ${wait}`;
+  const running = extend ? `Extending on the Space… ${wait}` : `Running Wan Animate on Runpod… ${wait}`;
   const started = Date.now();
   const limit = 14 * 60 * 1000;
   while (Date.now() - started < limit) {
@@ -393,7 +400,7 @@ async function pollJob(jobId) {
       data = null;
     }
     if (res.status === 404) {
-      els.genStatus.textContent = `Queued on ZeroGPU… ${WAIT_COPY}`;
+      els.genStatus.textContent = queued;
       continue;
     }
     if (!res.ok) {
@@ -401,13 +408,12 @@ async function pollJob(jobId) {
     }
     if (data?.phase === "done") return data;
     if (data?.phase === "error") throw new Error(publicErrorText(data.error || "Generate failed"));
-    els.genStatus.textContent =
-      data?.phase === "running"
-        ? `Running Wan Animate on ZeroGPU… ${WAIT_COPY}`
-        : `Queued on ZeroGPU… ${WAIT_COPY}`;
+    els.genStatus.textContent = data?.phase === "running" ? running : queued;
   }
   throw new Error(
-    "Timed out waiting for Generate. ZeroGPU can take longer than 10 minutes when the queue is busy. Wait 10–15 minutes and try once."
+    extend
+      ? "Timed out waiting for Extend. The Space can take several minutes. Wait a minute and try once."
+      : "Timed out waiting for Generate. The first Runpod run can take several minutes while the worker starts. Wait a minute and try once."
   );
 }
 
@@ -435,14 +441,14 @@ async function callSpace(apiName, payload) {
   if (data.phase === "error") throw new Error(publicErrorText(data.error || "Generate failed"));
   if (data.phase === "queued" || data.phase === "running") {
     if (!data.job_id) throw new Error("Generate did not return a job id");
-    return pollJob(data.job_id);
+    return pollJob(data.job_id, apiName);
   }
   return data;
 }
 
 els.btnGen.addEventListener("click", async () => {
   if (!selectedId || !photoFile) return;
-  setBusy(`Queuing on ZeroGPU… ${WAIT_COPY}`);
+  setBusy(`Queuing on Runpod… ${GENERATE_WAIT}`);
   try {
     const args = generateArgs();
     if (USE_PROXY) {
@@ -477,11 +483,15 @@ async function extendOnce(auto) {
     els.genStatus.textContent = "Generate a clip first.";
     return;
   }
-  setBusy(auto ? `Auto-extending on ZeroGPU… ${WAIT_COPY}` : `Extending on ZeroGPU… ${WAIT_COPY}`);
+  setBusy(auto ? `Auto-extending on the Space… ${EXTEND_WAIT}` : `Extending on the Space… ${EXTEND_WAIT}`);
   try {
     const api = auto ? "/auto_extend" : "/extend";
     if (!sessionId) {
-      throw new Error("Missing session_id — generate first in this browser session.");
+      throw new Error(
+        lastResultUrl && String(lastResultUrl).startsWith("/api/result")
+          ? "Extend uses the Hugging Face Space and cannot continue a Runpod clip."
+          : "Missing session_id — generate first in this browser session."
+      );
     }
     const args = extendArgs(auto);
     if (USE_PROXY) {

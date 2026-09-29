@@ -1,13 +1,15 @@
 /**
  * Netlify cannot keep a synchronous function open for a Wan run (60s limit).
- * The sync function uploads the still, stores a job, and starts
- * generate-background, which holds the Gradio queue stream for up to 15 minutes.
+ * The sync function stores a job and starts generate-background, which polls
+ * Runpod (or the Hugging Face Space, only when HF_GENERATE_FALLBACK is set)
+ * for up to 15 minutes.
  */
 import { connectLambda, getStore } from "@netlify/blobs";
 import { publicErrorText } from "./gatewayError.js";
 import { DEFAULT_SPACE } from "./videoUrl.js";
 import { uploadFiles } from "./gradioHttp.js";
-import { callSpaceApi } from "./gradioProxy.js";
+import { callSpaceApi, ProxyError } from "./gradioProxy.js";
+import { hfGenerateEnabled, resolveMotionVideoUrl, runpodConfigured, runRunpodGenerate } from "./runpod.js";
 
 export const JOB_STORE = "wan22-jobs";
 
@@ -29,12 +31,22 @@ function timeoutMessage(error, fallback) {
 
 export function memoryJobStore() {
   const json = new Map();
+  const bytes = new Map();
   return {
     async setJSON(key, value) {
       json.set(key, JSON.parse(JSON.stringify(value)));
     },
     async getJSON(key) {
       return json.has(key) ? JSON.parse(JSON.stringify(json.get(key))) : null;
+    },
+    async setBytes(key, data, metadata) {
+      const body = Buffer.isBuffer(data) ? Buffer.from(data) : Buffer.from(data);
+      bytes.set(key, { data: body, metadata: { ...(metadata || {}) } });
+    },
+    async getBytes(key) {
+      const hit = bytes.get(key);
+      if (!hit) return null;
+      return { data: Buffer.from(hit.data), metadata: { ...hit.metadata } };
     },
   };
 }
@@ -79,6 +91,28 @@ function blobAdapter(store) {
     },
     async getJSON(key) {
       return store.get(key, { type: "json" });
+    },
+    async setBytes(key, data, metadata = {}) {
+      const body = data instanceof Uint8Array ? data : new Uint8Array(data);
+      const meta = {};
+      for (const [name, value] of Object.entries(metadata)) meta[name] = String(value);
+      const type = meta.contentType || "video/mp4";
+      await store.set(key, new Blob([body], { type }), { metadata: meta });
+    },
+    async getBytes(key) {
+      if (typeof store.getWithMetadata === "function") {
+        const result = await store.getWithMetadata(key, { type: "arrayBuffer" });
+        if (!result || result.data == null) return null;
+        return { data: Buffer.from(result.data), metadata: result.metadata || {} };
+      }
+      const data = await store.get(key, { type: "arrayBuffer" });
+      if (data == null) return null;
+      let metadata = {};
+      if (typeof store.getMetadata === "function") {
+        const meta = await store.getMetadata(key);
+        metadata = meta?.metadata || {};
+      }
+      return { data: Buffer.from(data), metadata };
     },
   };
 }
@@ -140,13 +174,43 @@ export async function kickBackground(spec, env = process.env, fetchImpl = fetch,
   throw new Error(publicErrorText(`Could not start the generate worker (HTTP ${response.status}). ${text}`));
 }
 
+const MAX_STILL_BYTES = 2_000_000;
+
+async function stillBase64(photo) {
+  const buf = Buffer.from(await photo.arrayBuffer());
+  if (!buf.length) throw new ProxyError("The still photo was empty.", 400);
+  if (buf.length > MAX_STILL_BYTES) {
+    throw new ProxyError("That still is too large. Choose a smaller photo and try again.", 400);
+  }
+  return buf.toString("base64");
+}
+
 export async function enqueueGenerateJob(job, deps = {}) {
   const env = deps.env || process.env;
   const space = String(env.HF_SPACE_URL || DEFAULT_SPACE).trim() || DEFAULT_SPACE;
   const token = env.HF_TOKEN && String(env.HF_TOKEN).trim();
   const fetchImpl = deps.fetch || fetch;
+  const useRunpod = job.api === "/generate" && runpodConfigured(env);
   let image = null;
-  if (job.photo) {
+  let image_base64 = null;
+  let video_url = null;
+  let backend = "hf";
+  if (useRunpod) {
+    if (!job.photo) throw new ProxyError("Upload a still photo of the person who should do this motion.", 400);
+    try {
+      image_base64 = await stillBase64(job.photo);
+      video_url = await resolveMotionVideoUrl(job.payload || {}, { fetch: fetchImpl });
+    } catch (error) {
+      if (error instanceof ProxyError) throw error;
+      throw new ProxyError(errorText(error), 400);
+    }
+    backend = "runpod";
+  } else if (job.api === "/generate" && !hfGenerateEnabled(env)) {
+    throw new ProxyError(
+      "Generate uses the Runpod Wan Animate endpoint. RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID are not set on this site.",
+      500
+    );
+  } else if (job.photo) {
     const upload =
       deps.upload ||
       ((file) => uploadReference(space, token, file, withTimeout(fetchImpl, UPLOAD_TIMEOUT_MS)));
@@ -166,7 +230,10 @@ export async function enqueueGenerateJob(job, deps = {}) {
     job_id,
     api: job.api,
     payload: job.payload,
+    backend,
     image,
+    image_base64,
+    video_url,
   };
   const store = deps.store || netlifyJobStore(deps.event);
   await store.setJSON(job_id, { id: job_id, phase: "queued" });
@@ -190,14 +257,24 @@ export async function runBackgroundJob(spec, deps = {}) {
   }
   await store.setJSON(spec.job_id, { id: spec.job_id, phase: "running" });
   try {
-    const result = await callSpaceApi({
-      api: spec.api,
-      payload: spec.payload,
-      photo: spec.image || null,
-      env: deps.env || process.env,
-      connect: deps.connect,
-      timeoutMs: deps.timeoutMs ?? 14 * 60 * 1000,
-    });
+    const result =
+      spec.backend === "runpod"
+        ? await runRunpodGenerate(spec, {
+            store,
+            env: deps.env || process.env,
+            fetch: deps.fetch,
+            timeoutMs: deps.timeoutMs ?? 14 * 60 * 1000,
+            intervalMs: deps.intervalMs,
+            sleep: deps.sleep,
+          })
+        : await callSpaceApi({
+            api: spec.api,
+            payload: spec.payload,
+            photo: spec.image || null,
+            env: deps.env || process.env,
+            connect: deps.connect,
+            timeoutMs: deps.timeoutMs ?? 14 * 60 * 1000,
+          });
     const record = { id: spec.job_id, phase: "done", result };
     await store.setJSON(spec.job_id, record);
     return publicJob(record);
