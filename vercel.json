@@ -8,6 +8,12 @@
       "maxDuration": 300,
       "includeFiles": "node_modules/@gradio/client/dist/**"
     },
+    "api/job.js": {
+      "maxDuration": 30
+    },
+    "api/result.js": {
+      "maxDuration": 60
+    },
     "api/video.js": {
       "maxDuration": 60
     }

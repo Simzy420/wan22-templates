@@ -3,7 +3,7 @@
  * Plays the mp4 stored by the Runpod background job so phone Safari never
  * loads a cross-origin file or a data URL.
  */
-import { resultVideoKey } from "./runpod.js";
+import { isJobId, resultVideoKey } from "./runpod.js";
 
 const MAX_CHUNK = 4_000_000;
 
@@ -61,7 +61,7 @@ export async function handleResultRequest(request, deps = {}) {
   } catch {
     id = "";
   }
-  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+  if (!isJobId(id)) {
     return jsonResponse({ error: "Missing job id" }, 400);
   }
   const store = deps.store;
@@ -89,6 +89,11 @@ export async function handleResultRequest(request, deps = {}) {
 
   const bytes = Buffer.isBuffer(file.data) ? file.data : Buffer.from(file.data);
   const contentType = file.metadata?.contentType || "video/mp4";
+  return serveVideoBytes(request, bytes, contentType);
+}
+
+export function serveVideoBytes(request, bytes, contentType = "video/mp4") {
+  const method = request?.method || "GET";
   const total = bytes.length;
   const rangeHeader = request.headers.get("range");
   let status = 200;

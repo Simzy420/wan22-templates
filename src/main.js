@@ -4,7 +4,7 @@
  * same-origin /api/generate when USE_PROXY is true (required on iPhone).
  * Result video URLs on the Space host are rewritten to /api/video.
  */
-import { publicErrorText } from "../server/gatewayError.js";
+import { generateFailureText, publicErrorText } from "../server/gatewayError.js";
 import { rewriteSpaceVideoUrl } from "../server/videoUrl.js";
 
 const cfg = window.CONFIG || {};
@@ -472,7 +472,7 @@ els.btnGen.addEventListener("click", async () => {
     const hint = USE_PROXY
       ? ""
       : " If CORS blocked, set window.CONFIG.USE_PROXY = true and redeploy.";
-    els.genStatus.textContent = `Generate failed: ${publicErrorText(e)}.${hint}`;
+    els.genStatus.textContent = `Generate failed: ${generateFailureText(e)}.${hint}`;
   } finally {
     clearBusy();
   }

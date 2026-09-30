@@ -5,7 +5,7 @@
  * for up to 15 minutes.
  */
 import { connectLambda, getStore } from "@netlify/blobs";
-import { publicErrorText } from "./gatewayError.js";
+import { publicErrorText, scrubGenerateError } from "./gatewayError.js";
 import { DEFAULT_SPACE } from "./videoUrl.js";
 import { uploadFiles } from "./gradioHttp.js";
 import { callSpaceApi, ProxyError } from "./gradioProxy.js";
@@ -13,8 +13,10 @@ import { hfGenerateEnabled, resolveMotionVideoUrl, runpodConfigured, runRunpodGe
 
 export const JOB_STORE = "wan22-jobs";
 
-function errorText(error) {
-  return publicErrorText(error || "Generate failed");
+function errorText(error, env, api) {
+  const text = publicErrorText(error || "Generate failed");
+  if (api === "/generate" && runpodConfigured(env || {})) return scrubGenerateError(text, true);
+  return text;
 }
 
 export const UPLOAD_TIMEOUT_MS = 20000;
@@ -213,7 +215,7 @@ export async function enqueueGenerateJob(job, deps = {}) {
       video_url = await resolveMotionVideoUrl(job.payload || {}, { fetch: fetchImpl });
     } catch (error) {
       if (error instanceof ProxyError) throw error;
-      throw new ProxyError(errorText(error), 400);
+      throw new ProxyError(errorText(error, env, job.api), 400);
     }
     backend = "runpod";
   } else if (job.api === "/generate" && !hfGenerateEnabled(env)) {
@@ -252,7 +254,7 @@ export async function enqueueGenerateJob(job, deps = {}) {
   try {
     await kick(spec);
   } catch (error) {
-    await store.setJSON(job_id, { id: job_id, phase: "error", error: errorText(error) });
+    await store.setJSON(job_id, { id: job_id, phase: "error", error: errorText(error, env, job.api) });
     throw error;
   }
   return { job_id, phase: "queued" };
@@ -304,7 +306,7 @@ export async function runBackgroundJob(spec, deps = {}) {
     await store.setJSON(spec.job_id, record);
     return publicJob(record);
   } catch (error) {
-    const record = { id: spec.job_id, phase: "error", error: errorText(error) };
+    const record = { id: spec.job_id, phase: "error", error: errorText(error, env, spec.api) };
     await store.setJSON(spec.job_id, record);
     return publicJob(record);
   }

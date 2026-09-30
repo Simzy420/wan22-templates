@@ -1,14 +1,22 @@
 /**
  * Vercel serverless route: POST /api/generate
- * Same contract as netlify/functions/generate.js (multipart api, payload, photo).
+ * Same multipart contract as netlify/functions/generate.js (api, payload, photo).
  *
- * Env:
- *   HF_SPACE_URL  optional, default https://simzy-wan-2-2-templates.hf.space
- *   HF_TOKEN      optional Hugging Face token (server-side only)
+ * Generate posts to Runpod /run and returns { job_id, phase: "queued" }.
+ * The phone polls /api/job (/status) and plays /api/result. The Space is used
+ * for Extend, and for Generate only when HF_GENERATE_FALLBACK is set and
+ * RUNPOD_API_KEY is absent.
  *
- * maxDuration is also set in vercel.json (Hobby Fluid limit is 300s).
- * This route waits on the Space. Netlify cannot (60s), so it queues a job
- * instead; see netlify/functions/generate.js.
+ * Env (server-side, Production and Preview):
+ *   RUNPOD_API_KEY       required for Generate
+ *   RUNPOD_ENDPOINT_ID   swapr-wan-animate, zrmwpir4qzs66s
+ *   RUNPOD_ENDPOINT_URL  optional https://api.runpod.ai/v2/zrmwpir4qzs66s
+ *   HF_GENERATE_FALLBACK optional; Space only when the Runpod key is absent
+ *   HF_SPACE_URL         optional, Extend only
+ *   HF_TOKEN             optional Hugging Face token (server-side only)
+ *
+ * maxDuration stays 300s because Extend still waits on the Space.
+ * Netlify cannot (60s), so it queues a background job instead.
  */
 import { handleGenerateRequest } from "../server/gradioProxy.js";
 

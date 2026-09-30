@@ -11,9 +11,11 @@ import {
   extractRunpodVideoBase64,
   isAllowedTemplateVideoUrl,
   resolveMotionVideoUrl,
+  runpodConfigured,
   runpodEndpoint,
   templateVideoFromCatalog,
 } from "../server/runpod.js";
+import { handleRunpodJobRequest, handleRunpodResultRequest } from "../server/runpodRoutes.js";
 
 const MOTION =
   "https://huggingface.co/datasets/Simzy/wan22-template-clips/resolve/main/templates/demo-dance.mp4";
@@ -54,6 +56,10 @@ describe("Runpod Wan Animate client", () => {
       runpodEndpoint({ RUNPOD_ENDPOINT_ID: "abc", RUNPOD_ENDPOINT_URL: "https://api.runpod.ai/v2/abc/run" }),
       "https://api.runpod.ai/v2/abc"
     );
+    assert.equal(runpodConfigured({ RUNPOD_API_KEY: "k" }), true);
+    assert.equal(runpodEndpoint({ RUNPOD_API_KEY: "k" }), "https://api.runpod.ai/v2/zrmwpir4qzs66s");
+    assert.equal(runpodConfigured({ RUNPOD_ENDPOINT_ID: "zrmwpir4qzs66s" }), false);
+    assert.equal(runpodEndpoint({}), "");
   });
 
   it("accepts only public Hugging Face template clips", () => {
@@ -407,5 +413,57 @@ describe("Generate job on Runpod", () => {
     assert.equal(empty.phase, "error");
     assert.match(empty.error, /without a video/);
     assert.equal(empty.video, undefined);
+  });
+});
+
+describe("Vercel Runpod job routes", () => {
+  const jobId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+
+  it("polls /status and hides a Space failure when Runpod is configured", async () => {
+    const running = await handleRunpodJobRequest(new Request(`https://wan22-templates.vercel.app/api/job?id=${jobId}`), {
+      env: ENV,
+      fetch: async (url, init) => {
+        assert.equal(url, `https://api.runpod.ai/v2/zrmwpir4qzs66s/status/${jobId}`);
+        assert.equal(init.headers.Authorization, "Bearer secret-key");
+        return jsonRes({ id: jobId, status: "IN_PROGRESS" });
+      },
+    });
+    assert.equal(running.status, 200);
+    assert.equal((await running.json()).phase, "running");
+
+    const failed = await handleRunpodJobRequest(new Request(`https://wan22-templates.vercel.app/api/job?id=${jobId}`), {
+      env: ENV,
+      fetch: async () =>
+        jsonRes({
+          id: jobId,
+          status: "FAILED",
+          error:
+            "The Space failed before returning a video. If ZeroGPU is rate-limited, wait 10–15 minutes and try Generate once.",
+        }),
+    });
+    assert.equal(failed.status, 200);
+    const body = await failed.json();
+    assert.equal(body.phase, "error");
+    assert.match(body.error, /Runpod Wan Animate/);
+    assert.doesNotMatch(body.error, /ZeroGPU|rate-limited|Space failed/);
+    assert.equal(JSON.stringify(body).includes("secret-key"), false);
+  });
+
+  it("streams the completed mp4 from /status without calling the Space", async () => {
+    const encoded = tinyMp4().toString("base64");
+    const played = await handleRunpodResultRequest(
+      new Request(`https://wan22-templates.vercel.app/api/result?id=${jobId}`),
+      {
+        env: ENV,
+        fetch: async (url) => {
+          assert.match(url, /\/status\//);
+          return jsonRes({ id: jobId, status: "COMPLETED", output: { video: encoded } });
+        },
+      }
+    );
+    assert.equal(played.status, 200);
+    assert.equal(played.headers.get("content-type"), "video/mp4");
+    const bytes = Buffer.from(await played.arrayBuffer());
+    assert.equal(bytes.subarray(4, 8).toString(), "ftyp");
   });
 });

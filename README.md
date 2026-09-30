@@ -5,7 +5,7 @@ upload a still of yourself → Wan Animate puts you in that motion.
 
 **Phone site:** https://swapr-casey.netlify.app (Generate uses Runpod)
 
-**Vercel UI:** https://wan22-templates.vercel.app (synchronous Space proxy)
+**Vercel UI:** https://wan22-templates.vercel.app (Generate uses Runpod `/run` + `/status`)
 
 **Not** a LoRA trainer. No “upload 10–20 training videos” flow.
 
@@ -15,8 +15,8 @@ upload a still of yourself → Wan Animate puts you in that motion.
 |-------|-----|
 | Phone UI (Netlify) | https://swapr-casey.netlify.app |
 | Runpod endpoint | `zrmwpir4qzs66s` (`swapr-wan-animate`) — `https://api.runpod.ai/v2/zrmwpir4qzs66s` |
-| Phone UI (Vercel) | https://wan22-templates.vercel.app |
-| HF Space (Gradio API) | https://simzy-wan-2-2-templates.hf.space |
+| Phone UI (Vercel) | https://wan22-templates.vercel.app — same Runpod Generate path as Netlify |
+| HF Space (Gradio API) | https://simzy-wan-2-2-templates.hf.space — Extend, and Generate only if `HF_GENERATE_FALLBACK=true` and Runpod is unset |
 | Space repo | https://huggingface.co/spaces/Simzy/Wan-2.2-templates |
 | Template dataset | https://huggingface.co/datasets/Simzy/wan22-template-clips |
 | Catalog JSON (CDN) | https://huggingface.co/datasets/Simzy/wan22-template-clips/resolve/main/templates/catalog.json |
@@ -28,10 +28,11 @@ iPhone Safari blocks the page from calling Hugging Face or Runpod directly.
 Auto-extend** POST to the same-origin route `/api/generate`. The API key stays
 on the server. The phone never sees `RUNPOD_API_KEY` or `HF_TOKEN`.
 
-On **swapr-casey**, Generate submits the still (`image_base64`) and the
-selected template motion (`video_url`, a public Hugging Face dataset URL) to
-the Runpod Wan Animate endpoint, then polls that job from the background
-function. The mp4 comes back as base64. The site stores it and the phone plays
+On **swapr-casey** and on **Vercel**, Generate submits the still (`image_base64`)
+and the selected template motion (`video_url`, a public Hugging Face dataset
+URL) to the Runpod Wan Animate endpoint `zrmwpir4qzs66s`. Netlify polls from a
+background function. Vercel returns the Runpod job id immediately, and
+`/api/job` polls `/status`. The mp4 comes back as base64. The phone plays
 `/api/result?id=...` on the same origin, including `Range`.
 
 `USE_PROXY` must stay **`true`**. `false` makes the phone UI call the Space
@@ -59,26 +60,45 @@ https://wan22-templates.vercel.app.
    The browser should not call the Space. In the network panel that request is
    same-origin.
 
-`api/generate.js` is the Vercel Function. `vercel.json` sets its max duration
-to **300 seconds** (the Hobby Fluid limit). A single Generate usually fits in
-that window. A long Auto-extend can still time out. On Pro, raise
-`functions["api/generate.js"].maxDuration` (up to 800) and redeploy.
+`api/generate.js` submits Runpod `/run` and returns `{ job_id, phase: "queued" }`.
+`api/job.js` polls `/status`. `api/result.js` streams the mp4.
+`vercel.json` keeps `api/generate.js` at **300 seconds** because Extend still
+waits on the Space in that function. A long Auto-extend can still time out.
+On Pro, raise `functions["api/generate.js"].maxDuration` (up to 800) and redeploy.
 
 Vercel request bodies are about **4.5 MB**. The UI shrinks stills larger than
 3.5 MB before upload.
 
+Preview deployments (`*.vercel.app` on a branch) use the **Preview**
+environment. Production uses **Production**. A variable set only on one of
+those does not exist on the other. The preview that showed the old ZeroGPU
+sentence had `HF_TOKEN` and `HF_SPACE_URL` and no Runpod variables, so Generate
+called the Space.
+
 ### Environment variables
 
-Set these in the Vercel project (**Settings → Environment Variables**). Do not
-commit them.
+Set these in the Vercel project **wan22-templates** (**Settings → Environment
+Variables**) for **Production**, **Preview**, and **Development**. Do not
+commit them. They are not copied from Netlify.
 
 | Name | Required | Purpose |
 |------|----------|---------|
-| `HF_SPACE_URL` | No | Space the proxy calls. Default `https://simzy-wan-2-2-templates.hf.space` |
-| `HF_TOKEN` | No | Hugging Face token, read only on the server. Recommended so ZeroGPU uses your quota. |
+| `RUNPOD_API_KEY` | Yes for Generate | Server-side only. `Authorization: Bearer` on `/run` and `/status`. Sensitive. Never put this in the frontend or in git. Copy the value from the Netlify **swapr-casey** site. |
+| `RUNPOD_ENDPOINT_ID` | Yes for Generate | `zrmwpir4qzs66s` (`swapr-wan-animate`). If the key is set and this is empty, the server uses this id. |
+| `RUNPOD_ENDPOINT_URL` | No | `https://api.runpod.ai/v2/zrmwpir4qzs66s`. Other hosts are ignored. |
+| `HF_GENERATE_FALLBACK` | No | `true` sends Generate to the Space only when `RUNPOD_API_KEY` is absent. Leave unset. |
+| `HF_SPACE_URL` | No | Space used for Extend. Default `https://simzy-wan-2-2-templates.hf.space` |
+| `HF_TOKEN` | No | Hugging Face token, read only on the server. Used for Extend and `/api/video`, not the Runpod Generate path. |
 
-Nothing else is required for the proxy. The public page reads `public/config.js`,
-not these variables.
+`RUNPOD_ENDPOINT_ID` and `RUNPOD_ENDPOINT_URL` are set on this Vercel project
+for Production, Preview, and Development. `RUNPOD_API_KEY` is not in the
+Vercel project (it lives on Netlify swapr-casey). Paste that same key into
+Vercel as a **sensitive** variable for all three targets, then redeploy.
+Without the key, Generate returns a configuration error and does not call the
+Space.
+
+Changing env vars does not update an already-built deployment. Redeploy after
+saving them. On the phone, close the old tab before trying Generate again.
 
 ## Local dev
 
@@ -88,18 +108,22 @@ npm test
 npm run dev
 ```
 
-`npm run dev` mounts the same `/api/generate` handler as Vercel. Optional:
+`npm run dev` mounts the same `/api/generate`, `/api/job`, `/api/result`, and
+`/api/video` handlers as Vercel. Optional:
 
 ```bash
+export RUNPOD_API_KEY=          # server-side only; required or Generate refuses
+export RUNPOD_ENDPOINT_ID=zrmwpir4qzs66s
+export RUNPOD_ENDPOINT_URL=https://api.runpod.ai/v2/zrmwpir4qzs66s
 export HF_SPACE_URL=https://simzy-wan-2-2-templates.hf.space
-export HF_TOKEN=   # server-side only; leave unset to call the Space anonymously
+export HF_TOKEN=                # Extend and /api/video only
 ```
 
 `VITE_HF_SPACE` is only used when `USE_PROXY` is false.
 
-Do not press Generate on the Vercel dev server while checking the UI. That path
-still calls the Space and spends ZeroGPU. The Netlify phone site spends Runpod
-credits instead.
+Do not press Generate while checking the UI unless you intend to spend Runpod
+credits. Generate does not call the Space unless `HF_GENERATE_FALLBACK=true`
+and `RUNPOD_API_KEY` is unset.
 
 ## Deploy on Netlify
 
@@ -151,10 +175,10 @@ copied here.
 
 | Name | Required | Purpose |
 |------|----------|---------|
-| `RUNPOD_API_KEY` | Yes for Generate | Server-side only. `Authorization: Bearer` on `/run` and `/status`. Never put this in the frontend or in git. |
-| `RUNPOD_ENDPOINT_ID` | Yes for Generate | `zrmwpir4qzs66s` (`swapr-wan-animate`). |
+| `RUNPOD_API_KEY` | Yes for Generate | Server-side only. `Authorization: Bearer` on `/run` and `/status`. Never put this in the frontend or in git. The same value belongs on Vercel **wan22-templates** (Production, Preview, and Development). |
+| `RUNPOD_ENDPOINT_ID` | Yes for Generate | `zrmwpir4qzs66s` (`swapr-wan-animate`). Same id on Vercel. |
 | `RUNPOD_ENDPOINT_URL` | No | Base URL. Default `https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID`. Must be `https://api.runpod.ai/...`. |
-| `HF_GENERATE_FALLBACK` | No | `true` sends Generate to the Space only when the Runpod key and endpoint id are absent. |
+| `HF_GENERATE_FALLBACK` | No | `true` sends Generate to the Space only when `RUNPOD_API_KEY` is absent. Leave unset on swapr-casey and on Vercel. |
 | `HF_TOKEN` | No | Server-side only. Used for Extend and `/api/video`, not the Runpod Generate path. |
 | `HF_SPACE_URL` | No | Default `https://simzy-wan-2-2-templates.hf.space` |
 | `URL` | Set by Netlify | Site origin used to invoke `generate-background`. |
@@ -195,7 +219,7 @@ Build settings from `netlify.toml`: command `npm run build`, publish `dist`.
 1. Horizontal gallery of catalog clips. Visible and nearby videos autoplay **muted**, **looped**, and **playsInline** (iPhone Safari). Offscreen clips stay unloaded until you scroll near them.
 2. Tap a template. The still upload stays locked until that pick, then the page focuses the upload card.
 3. Dashed upload zone for a still photo.
-4. **Generate** posts the still and the template `video_url` to same-origin `/api/generate`. On swapr-casey that becomes a Runpod `/run` (`image_base64`, `video_url`, 832×480, 16 fps, cfg 1, 6 steps, `mode: replace`). The page polls `/api/job` and plays `/api/result`.
+4. **Generate** posts the still and the template `video_url` to same-origin `/api/generate`. On swapr-casey and on Vercel that becomes a Runpod `/run` (`image_base64`, `video_url`, 832×480, 16 fps, cfg 1, 6 steps, `mode: replace`) against `zrmwpir4qzs66s`. The page polls `/api/job` (`/status`) and plays `/api/result`.
 5. Result player + download from that same-origin mp4.
 6. Optional Extend / Auto-extend still go through `/api/generate` to the Space. They do not continue a Runpod clip.
 7. **How to use & create templates** opens step-by-step instructions for both flows.

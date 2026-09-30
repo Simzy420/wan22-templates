@@ -26,17 +26,29 @@ const RUNPOD_DEFAULTS = {
 const CREDIT_RE = /credit|insufficient|billing|payment required|out of funds|balance/i;
 const AUTH_RE = /unauthorized|invalid api key|forbidden|api key/i;
 
+/** swapr-wan-animate. Used when the API key is set and RUNPOD_ENDPOINT_ID is empty. */
+export const DEFAULT_ANIMATE_ENDPOINT_ID = "zrmwpir4qzs66s";
+
+const MAX_STILL_BYTES = 2_000_000;
+
 export function hfGenerateEnabled(env = {}) {
   const flag = String(env.HF_GENERATE_FALLBACK || "").trim().toLowerCase();
   return flag === "1" || flag === "true" || flag === "yes";
 }
 
+export function runpodEndpointId(env = {}) {
+  const id = String(env.RUNPOD_ENDPOINT_ID || "").trim();
+  if (id) return id;
+  if (String(env.RUNPOD_API_KEY || "").trim()) return DEFAULT_ANIMATE_ENDPOINT_ID;
+  return "";
+}
+
 export function runpodConfigured(env = {}) {
-  return Boolean(String(env.RUNPOD_API_KEY || "").trim() && String(env.RUNPOD_ENDPOINT_ID || "").trim());
+  return Boolean(String(env.RUNPOD_API_KEY || "").trim() && runpodEndpointId(env));
 }
 
 export function runpodEndpoint(env = {}) {
-  const id = String(env.RUNPOD_ENDPOINT_ID || "").trim();
+  const id = runpodEndpointId(env);
   const fallback = id ? `https://api.runpod.ai/v2/${id}` : "";
   const raw = String(env.RUNPOD_ENDPOINT_URL || "").trim();
   if (!raw) return fallback;
@@ -161,7 +173,7 @@ export function explainRunpodFailure({ httpStatus, json, text } = {}) {
     return "Runpod is out of credits. Add credits on the Runpod account, then try Generate again.";
   }
   if (httpStatus === 401 || httpStatus === 403 || AUTH_RE.test(blob)) {
-    return "Runpod rejected the API key. Check RUNPOD_API_KEY on the Netlify site, then clear the cache and redeploy.";
+    return "Runpod rejected the API key. Check RUNPOD_API_KEY on this site (Vercel Production and Preview, or Netlify swapr-casey), then redeploy.";
   }
   if (statusName === "TIMED_OUT") {
     return "Runpod timed out. The first Generate after the worker has been idle can take several minutes. Wait a minute and try once.";
@@ -233,6 +245,71 @@ function isTerminalFailure(status) {
   return name === "FAILED" || name === "CANCELLED" || name === "TIMED_OUT" || name === "ERROR";
 }
 
+export function isJobId(value) {
+  return /^[A-Za-z0-9_-]{6,80}$/.test(String(value || ""));
+}
+
+function statusError(message, statusCode) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+export async function stillToBase64(photo) {
+  if (!photo || typeof photo.arrayBuffer !== "function") {
+    throw statusError("Upload a still photo of the person who should do this motion.", 400);
+  }
+  const buf = Buffer.from(await photo.arrayBuffer());
+  if (!buf.length) throw statusError("The still photo was empty.", 400);
+  if (buf.length > MAX_STILL_BYTES) {
+    throw statusError("That still is too large. Choose a smaller photo and try again.", 400);
+  }
+  return buf.toString("base64");
+}
+
+/**
+ * Map a Runpod /status body to the phone job document.
+ * Never includes the mp4 bytes or the API key.
+ */
+export function describeRunpodJob(jobId, body) {
+  const status = String(body?.status || "").toUpperCase();
+  if (status === "COMPLETED") {
+    const encoded = extractRunpodVideoBase64(body?.output ?? body);
+    if (!decodeVideoBase64(encoded)) {
+      return {
+        job_id: jobId,
+        phase: "error",
+        error: explainRunpodFailure({
+          json: {
+            status,
+            error: body?.output?.error || body?.error || "Runpod finished without a video.",
+          },
+        }),
+      };
+    }
+    const url = `/api/result?id=${encodeURIComponent(jobId)}`;
+    return {
+      job_id: jobId,
+      phase: "done",
+      video: url,
+      url,
+      status: "Done.",
+      session_id: null,
+      state: null,
+    };
+  }
+  if (isTerminalFailure(status)) {
+    return { job_id: jobId, phase: "error", error: explainRunpodFailure({ json: body }) };
+  }
+  if (status === "IN_PROGRESS" || status === "RUNNING") {
+    return { job_id: jobId, phase: "running" };
+  }
+  if (status === "IN_QUEUE" || status === "QUEUED") {
+    return { job_id: jobId, phase: "queued" };
+  }
+  return { job_id: jobId, phase: "error", error: "Runpod did not return a job status." };
+}
+
 async function fetchWithTimeout(fetchImpl, url, init, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -276,56 +353,116 @@ async function runpodRequest(url, { apiKey, fetchImpl, method = "GET", body, tim
     json = null;
   }
   if (!response.ok) {
-    throw new Error(explainRunpodFailure({ httpStatus: response.status, json, text }));
+    const error = new Error(explainRunpodFailure({ httpStatus: response.status, json, text }));
+    error.statusCode = response.status;
+    throw error;
   }
   return { response, text, json };
 }
 
-export async function submitAndWait(env, input, deps = {}) {
+function requireRunpod(env) {
   const endpoint = runpodEndpoint(env);
   const apiKey = String(env.RUNPOD_API_KEY || "").trim();
   if (!endpoint || !apiKey) {
     throw new Error("Generate uses Runpod, but RUNPOD_API_KEY or RUNPOD_ENDPOINT_ID is missing.");
   }
-  const fetchImpl = deps.fetch || fetch;
-  const timeoutMs = deps.timeoutMs ?? 14 * 60 * 1000;
-  const intervalMs = deps.intervalMs ?? 5000;
-  const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const started = Date.now();
+  return { endpoint, apiKey };
+}
 
+export async function startRunpodJob(env, input, deps = {}) {
+  const { endpoint, apiKey } = requireRunpod(env);
+  const fetchImpl = deps.fetch || fetch;
+  const timeoutMs = Math.min(30000, deps.timeoutMs ?? 30000);
   const submitted = await runpodRequest(`${endpoint}/run`, {
     apiKey,
     fetchImpl,
     method: "POST",
     body: { input },
-    timeoutMs: Math.min(30000, timeoutMs),
+    timeoutMs,
   });
   const first = submitted.json || {};
   if (isTerminalFailure(first.status)) {
     throw new Error(explainRunpodFailure({ httpStatus: submitted.response.status, json: first, text: submitted.text }));
   }
-  if (!first.id) {
-    throw new Error(explainRunpodFailure({ httpStatus: submitted.response.status, json: first, text: submitted.text || "Runpod did not return a job id." }));
+  if (!isJobId(first.id)) {
+    throw new Error(
+      explainRunpodFailure({
+        httpStatus: submitted.response.status,
+        json: first,
+        text: submitted.text || "Runpod did not return a job id.",
+      })
+    );
   }
+  return first;
+}
+
+export async function fetchRunpodJob(env, jobId, deps = {}) {
+  const { endpoint, apiKey } = requireRunpod(env);
+  const fetchImpl = deps.fetch || fetch;
+  const polled = await runpodRequest(`${endpoint}/status/${encodeURIComponent(jobId)}`, {
+    apiKey,
+    fetchImpl,
+    timeoutMs: deps.timeoutMs ?? 30000,
+  });
+  return { body: polled.json || {}, httpStatus: polled.response.status, text: polled.text };
+}
+
+export async function submitAndWait(env, input, deps = {}) {
+  const timeoutMs = deps.timeoutMs ?? 14 * 60 * 1000;
+  const intervalMs = deps.intervalMs ?? 5000;
+  const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const started = Date.now();
+  const first = await startRunpodJob(env, input, { ...deps, timeoutMs });
   if (String(first.status || "").toUpperCase() === "COMPLETED") return first;
 
   while (Date.now() - started < timeoutMs) {
     await sleep(intervalMs);
-    const polled = await runpodRequest(`${endpoint}/status/${encodeURIComponent(first.id)}`, {
-      apiKey,
-      fetchImpl,
-      timeoutMs: 30000,
-    });
-    const body = polled.json || {};
+    const polled = await fetchRunpodJob(env, first.id, deps);
+    const body = polled.body || {};
     const status = String(body.status || "").toUpperCase();
     if (status === "COMPLETED") return body;
     if (isTerminalFailure(status)) {
-      throw new Error(explainRunpodFailure({ httpStatus: polled.response.status, json: body, text: polled.text }));
+      throw new Error(explainRunpodFailure({ httpStatus: polled.httpStatus, json: body, text: polled.text }));
     }
   }
   throw new Error(
     "Runpod did not finish within 14 minutes. The first Generate after the worker has been idle can take several minutes. Wait a minute and try once."
   );
+}
+
+/**
+ * Vercel has no background worker. POST /run and return the Runpod job id.
+ * The phone polls /api/job, which calls /status.
+ */
+export async function submitGenerateOnRunpod({ payload, photo, env, fetch: fetchImpl } = {}) {
+  let image_base64;
+  let video_url;
+  try {
+    image_base64 = await stillToBase64(photo);
+    video_url = await resolveMotionVideoUrl(payload || {}, { fetch: fetchImpl || fetch });
+  } catch (error) {
+    if (Number.isInteger(error?.statusCode)) throw error;
+    throw statusError(error instanceof Error ? error.message : String(error), 400);
+  }
+  const input = buildRunpodInput({ ...(payload || {}), video_url, image_base64 });
+  const started = await startRunpodJob(env, input, { fetch: fetchImpl || fetch });
+  return { job_id: started.id, phase: "queued" };
+}
+
+export async function loadRunpodResultVideo(env, jobId, deps = {}) {
+  const polled = await fetchRunpodJob(env, jobId, deps);
+  const described = describeRunpodJob(jobId, polled.body);
+  if (described.phase !== "done") {
+    const error = new Error(described.phase === "error" ? described.error : "Result is not ready");
+    error.statusCode = described.phase === "error" ? 502 : 404;
+    throw error;
+  }
+  const encoded = extractRunpodVideoBase64(polled.body?.output ?? polled.body);
+  const bytes = decodeVideoBase64(encoded);
+  if (!bytes) {
+    throw statusError("Runpod finished without a video.", 502);
+  }
+  return { bytes, contentType: videoContentType(bytes) };
 }
 
 export async function runRunpodGenerate(spec, deps = {}) {

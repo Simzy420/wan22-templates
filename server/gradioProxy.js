@@ -8,9 +8,9 @@
  * Calls the Hugging Face Space with a fetch-only Gradio queue client so the
  * phone browser never makes a cross-origin Gradio request.
  */
-import { publicErrorText } from "./gatewayError.js";
+import { publicErrorText, scrubGenerateError } from "./gatewayError.js";
 import { createGradioHttpClient } from "./gradioHttp.js";
-import { runpodConfigured } from "./runpod.js";
+import { hfGenerateEnabled, runpodConfigured, submitGenerateOnRunpod } from "./runpod.js";
 import { absolutizeSpaceUrl, DEFAULT_SPACE, rewriteSpaceVideoUrl } from "./videoUrl.js";
 
 // The old Gradio JS client rejected inside an async Promise executor, and Node
@@ -245,19 +245,34 @@ export async function handleGenerateRequest(request, deps = {}) {
     return jsonResponse({ error: "Method not allowed" }, 405);
   }
 
+  let apiName = "";
+  const env = deps.env || process.env;
   try {
     const { api, payload, photo } = await readRequest(request);
+    apiName = api;
     if (api === "/generate" && !photo) {
       throw new ProxyError("Upload a still photo of the person who should do this motion.", 400);
     }
-    const env = deps.env || process.env;
+    // Netlify queues every API (60s sync cap) and the worker calls Runpod.
+    // Vercel has no queue: Generate submits /run here and the phone polls
+    // /status. The Space is only for Extend, or for Generate when
+    // HF_GENERATE_FALLBACK is set and Runpod is unset.
     if (typeof deps.enqueue === "function") {
       const queued = await deps.enqueue({ api, payload, photo, env });
       return jsonResponse(queued, 202);
     }
     if (api === "/generate" && runpodConfigured(env)) {
+      const queued = await submitGenerateOnRunpod({
+        payload,
+        photo,
+        env,
+        fetch: deps.fetch,
+      });
+      return jsonResponse(queued, 202);
+    }
+    if (api === "/generate" && !hfGenerateEnabled(env)) {
       throw new ProxyError(
-        "Generate uses the Runpod Wan Animate endpoint, but this request was not queued.",
+        "Generate uses the Runpod Wan Animate endpoint. RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID are not set on this site. Set them for Production and Preview, then redeploy.",
         500
       );
     }
@@ -272,6 +287,8 @@ export async function handleGenerateRequest(request, deps = {}) {
     return jsonResponse(data, 200);
   } catch (error) {
     const status = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
-    return jsonResponse({ error: errorMessage(error) }, status);
+    const text =
+      apiName === "/generate" ? scrubGenerateError(errorMessage(error), runpodConfigured(env)) : errorMessage(error);
+    return jsonResponse({ error: text }, status);
   }
 }
