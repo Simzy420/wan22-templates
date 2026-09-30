@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import { handleGenerateRequest } from "./server/gradioProxy.js";
+import { handleRunpodJobRequest, handleRunpodResultRequest } from "./server/runpodRoutes.js";
 import { handleVideoRequest } from "./server/videoProxy.js";
 
 function webRequest(req, body) {
@@ -15,20 +16,26 @@ function webRequest(req, body) {
   return new Request(`http://${req.headers.host || "127.0.0.1"}${req.url}`, init);
 }
 
-/** Mount the same /api/generate and /api/video handlers production uses on Vercel. */
+/** Mount the same API handlers production uses on Vercel. */
 function apiDev() {
   return {
     name: "api-dev",
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const path = (req.url || "").split("?")[0];
-        if (path !== "/api/generate" && path !== "/api/video") return next();
+        const handlers = {
+          "/api/generate": handleGenerateRequest,
+          "/api/video": handleVideoRequest,
+          "/api/job": handleRunpodJobRequest,
+          "/api/result": handleRunpodResultRequest,
+        };
+        const handle = handlers[path];
+        if (!handle) return next();
         try {
           const chunks = [];
           for await (const chunk of req) chunks.push(chunk);
           const request = webRequest(req, Buffer.concat(chunks));
-          const response =
-            path === "/api/video" ? await handleVideoRequest(request) : await handleGenerateRequest(request);
+          const response = await handle(request);
           res.statusCode = response.status;
           response.headers.forEach((value, key) => res.setHeader(key, value));
           res.end(Buffer.from(await response.arrayBuffer()));

@@ -201,7 +201,7 @@ describe("handleGenerateRequest", () => {
     assert.equal(body.error, "Method not allowed");
   });
 
-  it("posts multipart generate through the injected client and does not call the network", async () => {
+  it("posts multipart generate through the Space only when fallback is explicit", async () => {
     const calls = [];
     const form = new FormData();
     form.append(
@@ -219,7 +219,7 @@ describe("handleGenerateRequest", () => {
     form.append("photo", new File([Buffer.from("jpeg-bytes")], "still.jpg", { type: "image/jpeg" }));
     const res = await handleGenerateRequest(new Request("http://local/api/generate", { method: "POST", body: form }), {
       connect: mockConnect(calls),
-      env: { HF_SPACE_URL: SPACE },
+      env: { HF_SPACE_URL: SPACE, HF_GENERATE_FALLBACK: "true" },
     });
     assert.equal(res.status, 200);
     const body = await res.json();
@@ -283,8 +283,9 @@ describe("handleGenerateRequest", () => {
     assert.match(body.error, /Unsupported api/);
   });
 
-  it("does not call Gradio for Generate when Runpod is set and the job was not queued", async () => {
+  it("submits Generate to Runpod /run when the endpoint is set and nothing was queued", async () => {
     const calls = [];
+    const seen = [];
     const form = new FormData();
     form.append("api", "/generate");
     form.append("payload", JSON.stringify({ template_id: "demo-wave", video_url: MOTION, prompt: "a person" }));
@@ -292,13 +293,65 @@ describe("handleGenerateRequest", () => {
     const res = await handleGenerateRequest(new Request("http://local/api/generate", { method: "POST", body: form }), {
       connect: mockConnect(calls),
       env: { RUNPOD_API_KEY: "test-key", RUNPOD_ENDPOINT_ID: "zrmwpir4qzs66s" },
+      fetch: async (url, init) => {
+        seen.push({ url, init });
+        assert.match(url, /https:\/\/api\.runpod\.ai\/v2\/zrmwpir4qzs66s\/run$/);
+        assert.equal(init.headers.Authorization, "Bearer test-key");
+        const body = JSON.parse(init.body);
+        assert.equal(body.input.video_url, MOTION);
+        assert.equal(body.input.image_base64, Buffer.from("jpeg-bytes").toString("base64"));
+        return new Response(
+          JSON.stringify({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", status: "IN_QUEUE" }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      },
     });
-    assert.equal(res.status, 500);
+    assert.equal(res.status, 202);
     assert.equal(calls.length, 0);
+    assert.equal(seen.length, 1);
     const body = await res.json();
-    assert.match(body.error, /not queued/);
-    assert.doesNotMatch(body.error, /video_url/);
-    assert.equal(body.error.includes("test-key"), false);
+    assert.equal(body.phase, "queued");
+    assert.equal(body.job_id, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    assert.equal(body.error, undefined);
+    assert.equal(JSON.stringify(body).includes("test-key"), false);
+    assert.doesNotMatch(JSON.stringify(body), /ZeroGPU|Space failed/);
+  });
+
+  it("does not call the Space when Generate has no Runpod key", async () => {
+    let connected = false;
+    const form = new FormData();
+    form.append("api", "/generate");
+    form.append("payload", JSON.stringify({ template_id: "demo-wave", video_url: MOTION }));
+    form.append("photo", new File([Buffer.from("jpeg-bytes")], "still.jpg", { type: "image/jpeg" }));
+    const res = await handleGenerateRequest(new Request("http://local/api/generate", { method: "POST", body: form }), {
+      connect: async () => {
+        connected = true;
+        return { predict: async () => ({ data: [] }) };
+      },
+      env: { HF_SPACE_URL: SPACE, HF_TOKEN: "hf-secret" },
+    });
+    assert.equal(connected, false);
+    assert.equal(res.status, 500);
+    const body = await res.json();
+    assert.match(body.error, /RUNPOD_API_KEY/);
+    assert.doesNotMatch(body.error, /ZeroGPU|Space failed|rate-limited/);
+    assert.equal(body.error.includes("hf-secret"), false);
+  });
+
+  it("calls the Space for Generate only when HF fallback is explicit and Runpod is unset", async () => {
+    const calls = [];
+    const form = new FormData();
+    form.append("api", "/generate");
+    form.append("payload", JSON.stringify({ template_id: "demo-wave", prompt: "a person" }));
+    form.append("photo", new File([Buffer.from("jpeg-bytes")], "still.jpg", { type: "image/jpeg" }));
+    const res = await handleGenerateRequest(new Request("http://local/api/generate", { method: "POST", body: form }), {
+      connect: mockConnect(calls),
+      env: { HF_GENERATE_FALLBACK: "true", HF_SPACE_URL: SPACE },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].api, "/generate");
+    assert.equal("video_url" in calls[0].args, false);
   });
 
   it("returns the client error without throwing", async () => {
@@ -502,7 +555,10 @@ describe("phone UI wiring", () => {
     assert.match(space, /template clip unchanged/);
     assert.match(space, /cover_resize\(pil, frame_w, frame_h\)/);
     assert.equal(vercel.functions["api/generate.js"].maxDuration, 300);
+    assert.equal(vercel.functions["api/job.js"].maxDuration, 30);
+    assert.equal(vercel.functions["api/result.js"].maxDuration, 60);
     assert.equal(vercel.functions["api/video.js"].maxDuration, 60);
+    assert.match(main, /generateFailureText/);
     assert.match(vercel.functions["api/generate.js"].includeFiles, /@gradio\/client\/dist/);
     assert.equal(vercel.outputDirectory, "dist");
     assert.equal(vercel.framework, "vite");
