@@ -15,8 +15,10 @@ export const TEMPLATE_CDN_BASE =
 
 const RUNPOD_DEFAULTS = {
   negative_prompt: "blurry, low quality, distorted",
-  width: 832,
-  height: 480,
+  // Template clips are phone recordings (portrait). 832x480 landscape made the
+  // worker's VHS_LoadVideo crop the motion clip, cutting the head in half.
+  width: 480,
+  height: 832,
   fps: 16,
   cfg: 1,
   steps: 6,
@@ -130,6 +132,24 @@ function normalizeSeed(seed) {
   return Math.floor(Math.random() * 1_000_000_000);
 }
 
+/**
+ * Pick the worker width/height from the template's aspect. The worker feeds
+ * width/height to VHS_LoadVideo (crops the motion clip to that aspect) and to
+ * ImageResizeKJv2 (pads the reference still), so they must match the clip.
+ */
+export function targetSize(fields = {}) {
+  const w = Number(fields.template_width);
+  const h = Number(fields.template_height);
+  let orientation = String(fields.orientation || "").toLowerCase();
+  if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+    const ratio = w / h;
+    orientation = ratio > 1.15 ? "landscape" : ratio < 0.87 ? "portrait" : "square";
+  }
+  if (orientation === "landscape") return { width: 832, height: 480 };
+  if (orientation === "square") return { width: 640, height: 640 };
+  return { width: RUNPOD_DEFAULTS.width, height: RUNPOD_DEFAULTS.height };
+}
+
 export function buildRunpodInput(fields = {}) {
   if (!fields.image_base64 || typeof fields.image_base64 !== "string") {
     throw new Error("The still photo was empty.");
@@ -141,11 +161,10 @@ export function buildRunpodInput(fields = {}) {
   return {
     image_base64: fields.image_base64,
     video_url: fields.video_url,
-    prompt: String(fields.prompt || "a person, natural motion, cinematic, high quality").slice(0, 2000),
+    prompt: String(String(fields.prompt || "").trim() || "a person, natural motion, cinematic, high quality").slice(0, 2000),
     negative_prompt: (negative || RUNPOD_DEFAULTS.negative_prompt).slice(0, 1000),
     seed: normalizeSeed(fields.seed),
-    width: RUNPOD_DEFAULTS.width,
-    height: RUNPOD_DEFAULTS.height,
+    ...targetSize(fields),
     fps: RUNPOD_DEFAULTS.fps,
     cfg: RUNPOD_DEFAULTS.cfg,
     steps: RUNPOD_DEFAULTS.steps,

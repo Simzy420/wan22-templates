@@ -107,8 +107,8 @@ describe("Runpod Wan Animate client", () => {
     assert.equal(input.video_url, MOTION);
     assert.equal("video_base64" in input, false);
     assert.equal(input.image_base64, "abc");
-    assert.equal(input.width, 832);
-    assert.equal(input.height, 480);
+    assert.equal(input.width, 480);
+    assert.equal(input.height, 832);
     assert.equal(input.fps, 16);
     assert.equal(input.cfg, 1);
     assert.equal(input.steps, 6);
@@ -220,7 +220,7 @@ describe("Generate job on Runpod", () => {
           const body = JSON.parse(init.body);
           assert.equal(body.input.video_url, MOTION);
           assert.equal("video_base64" in body.input, false);
-          assert.equal(body.input.width, 832);
+          assert.equal(body.input.width, 480);
           assert.equal(body.input.mode, "replace");
           assert.equal(init.headers.Authorization, "Bearer secret-key");
           return jsonRes({ id: "rp-job-1", status: "IN_QUEUE" });
@@ -466,4 +466,15 @@ describe("Vercel Runpod job routes", () => {
     const bytes = Buffer.from(await played.arrayBuffer());
     assert.equal(bytes.subarray(4, 8).toString(), "ftyp");
   });
+});
+
+import { targetSize } from "../server/runpod.js";
+import { test as t2 } from "node:test";
+import assert2 from "node:assert/strict";
+
+t2("targetSize follows the template aspect so the worker does not crop the head", () => {
+  assert2.deepEqual(targetSize({ template_width: 534, template_height: 1008 }), { width: 480, height: 832 });
+  assert2.deepEqual(targetSize({ template_width: 1920, template_height: 1080 }), { width: 832, height: 480 });
+  assert2.deepEqual(targetSize({ orientation: "square" }), { width: 640, height: 640 });
+  assert2.deepEqual(targetSize({}), { width: 480, height: 832 });
 });

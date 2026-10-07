@@ -28,6 +28,9 @@ let photoBlobUrl = null;
 let lastResultUrl = null;
 /** Session id returned by Space /generate for /extend API calls. */
 let sessionId = "";
+/** Runpod job id of the Generate in flight (Vercel). Used by Stop GPU. */
+let currentRunpodJob = "";
+let lastResultBlob = null;
 
 const els = {
   rail: document.getElementById("template-rail"),
@@ -48,6 +51,10 @@ const els = {
   resultPanel: document.getElementById("result-panel"),
   resultVideo: document.getElementById("result-video"),
   btnDownload: document.getElementById("btn-download"),
+  btnSave: document.getElementById("btn-save-photos"),
+  balance: document.getElementById("runpod-balance"),
+  btnStop: document.getElementById("btn-stop-gpu"),
+  stopStatus: document.getElementById("stop-status"),
   btnExtend: document.getElementById("btn-extend"),
   btnAuto: document.getElementById("btn-auto-extend"),
   extendTarget: document.getElementById("extend-target"),
@@ -64,6 +71,49 @@ function videoUrl(t) {
   if (t.video_url) return t.video_url;
   const rel = t.video_path || t.video || "";
   return CDN_BASE + rel.replace(/^\//, "");
+}
+
+/** Read the motion clip's pixel size so the worker and the still use its aspect. */
+const sizeCache = new Map();
+function templateSize(t) {
+  if (!t) return Promise.resolve(null);
+  if (sizeCache.has(t.id)) return Promise.resolve(sizeCache.get(t.id));
+  const card = els.rail.querySelector(`.tcard[data-id="${CSS.escape(t.id)}"] video`);
+  if (card && card.videoWidth && card.videoHeight) {
+    const size = { width: card.videoWidth, height: card.videoHeight };
+    sizeCache.set(t.id, size);
+    return Promise.resolve(size);
+  }
+  return new Promise((resolve) => {
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.muted = true;
+    v.playsInline = true;
+    const done = (size) => {
+      if (size) sizeCache.set(t.id, size);
+      v.removeAttribute("src");
+      resolve(size);
+    };
+    const timer = setTimeout(() => done(null), 8000);
+    v.addEventListener("loadedmetadata", () => {
+      clearTimeout(timer);
+      done(v.videoWidth && v.videoHeight ? { width: v.videoWidth, height: v.videoHeight } : null);
+    });
+    v.addEventListener("error", () => {
+      clearTimeout(timer);
+      done(null);
+    });
+    v.src = videoUrl(t);
+  });
+}
+
+/** Worker size for a template, mirrored from server/runpod.js targetSize. */
+function workerSize(size) {
+  if (!size) return { width: 480, height: 832 };
+  const ratio = size.width / size.height;
+  if (ratio > 1.15) return { width: 832, height: 480 };
+  if (ratio < 0.87) return { width: 480, height: 832 };
+  return { width: 640, height: 640 };
 }
 
 function updateGenerateEnabled() {
@@ -303,7 +353,40 @@ function showResult(fileOrUrl) {
   els.resultVideo.src = lastResultUrl;
   els.resultVideo.play().catch(() => {});
   els.btnDownload.href = lastResultUrl;
+  lastResultBlob = null;
 }
+
+async function resultFile() {
+  if (!lastResultBlob) {
+    const res = await fetch(lastResultUrl);
+    if (!res.ok) throw new Error(`Video HTTP ${res.status}`);
+    lastResultBlob = await res.blob();
+  }
+  return new File([lastResultBlob], "become-the-character.mp4", { type: "video/mp4" });
+}
+
+/** iPhone: the share sheet offers "Save Video" to Photos. Elsewhere: download. */
+els.btnSave?.addEventListener("click", async () => {
+  if (!lastResultUrl) return;
+  try {
+    const file = await resultFile();
+    if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+      await navigator.share({ files: [file], title: "Become the Character" });
+      return;
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(file);
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  } catch (e) {
+    if (e && e.name === "AbortError") return;
+    console.error(e);
+    els.btnDownload.click();
+  }
+});
 
 function statusText(value, fallback) {
   if (value == null || value === "") return fallback;
@@ -320,19 +403,38 @@ function rememberSession(data) {
   if (sid) sessionId = String(sid);
 }
 
-/** Phone stills (including HEIC) are re-encoded to JPEG so the Space receives a real image under the ~4.5 MB body limit. */
-async function photoForUpload(file) {
+/**
+ * Phone stills (including HEIC) are re-encoded to JPEG under the body limit.
+ * The still is letterboxed (padded, never cropped) to the motion clip's
+ * aspect so the whole subject, head included, reaches the worker.
+ */
+async function photoForUpload(file, target) {
   if (!file) return file;
   try {
     const bitmap = await createImageBitmap(file);
+    const aspect = target ? target.width / target.height : bitmap.width / bitmap.height;
     const maxEdge = 1280;
-    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
+    let cw;
+    let ch;
+    if (bitmap.width / bitmap.height > aspect) {
+      cw = bitmap.width;
+      ch = Math.round(bitmap.width / aspect);
+    } else {
+      ch = bitmap.height;
+      cw = Math.round(bitmap.height * aspect);
+    }
+    const scale = Math.min(1, maxEdge / Math.max(cw, ch));
+    const width = Math.max(1, Math.round(cw * scale));
+    const height = Math.max(1, Math.round(ch * scale));
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
-    canvas.getContext("2d").drawImage(bitmap, 0, 0, width, height);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, width, height);
+    const dw = Math.round(bitmap.width * scale);
+    const dh = Math.round(bitmap.height * scale);
+    ctx.drawImage(bitmap, Math.round((width - dw) / 2), Math.round((height - dh) / 2), dw, dh);
     if (typeof bitmap.close === "function") bitmap.close();
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
     if (!blob) return file;
@@ -342,15 +444,19 @@ async function photoForUpload(file) {
   }
 }
 
-function generateArgs() {
+function generateArgs(size) {
   const selected = templates.find((t) => t.id === selectedId);
+  const target = workerSize(size);
   return {
     template_id: selectedId,
     video_url: selected ? videoUrl(selected) : "",
-    prompt: els.prompt.value || "a person, natural motion, cinematic, high quality",
+    prompt: els.prompt.value.trim() || "a person, natural motion, cinematic, high quality",
+    template_width: size ? size.width : undefined,
+    template_height: size ? size.height : undefined,
+    orientation: target.width > target.height ? "landscape" : target.width < target.height ? "portrait" : "square",
     max_seconds: 3,
-    height: 480,
-    width: 384,
+    height: target.height,
+    width: target.width,
     steps: 6,
     guidance: 1,
     sample_shift: 5,
@@ -423,7 +529,7 @@ async function callSpace(apiName, payload) {
   form.append("api", apiName);
   form.append("payload", JSON.stringify(payload.json || {}));
   if (payload.photo) {
-    const photo = await photoForUpload(payload.photo);
+    const photo = await photoForUpload(payload.photo, payload.target);
     form.append("photo", photo, photo.name || "photo.jpg");
   }
   const res = await fetch("/api/generate", { method: "POST", body: form });
@@ -441,7 +547,12 @@ async function callSpace(apiName, payload) {
   if (data.phase === "error") throw new Error(publicErrorText(data.error || "Generate failed"));
   if (data.phase === "queued" || data.phase === "running") {
     if (!data.job_id) throw new Error("Generate did not return a job id");
-    return pollJob(data.job_id, apiName);
+    if (apiName === "/generate") currentRunpodJob = data.job_id;
+    try {
+      return await pollJob(data.job_id, apiName);
+    } finally {
+      if (apiName === "/generate") currentRunpodJob = "";
+    }
   }
   return data;
 }
@@ -450,9 +561,10 @@ els.btnGen.addEventListener("click", async () => {
   if (!selectedId || !photoFile) return;
   setBusy(`Queuing on Runpod… ${GENERATE_WAIT}`);
   try {
-    const args = generateArgs();
+    const size = await templateSize(templates.find((t) => t.id === selectedId));
+    const args = generateArgs(size);
     if (USE_PROXY) {
-      const data = await callSpace("/generate", { json: args, photo: photoFile });
+      const data = await callSpace("/generate", { json: args, photo: photoFile, target: workerSize(size) });
       rememberSession(data);
       showResult(data.video || data.url);
       els.genStatus.textContent = statusText(data.status, "Done.");
@@ -520,4 +632,41 @@ async function extendOnce(auto) {
 els.btnExtend.addEventListener("click", () => extendOnce(false));
 els.btnAuto.addEventListener("click", () => extendOnce(true));
 
+async function refreshBalance() {
+  if (!els.balance) return;
+  try {
+    const res = await fetch("/api/balance", { cache: "no-store" });
+    const data = await res.json();
+    if (!res.ok || typeof data.balance !== "number") throw new Error(data.error || `HTTP ${res.status}`);
+    const spend = typeof data.spendPerHour === "number" ? ` · $${data.spendPerHour.toFixed(3)}/hr` : "";
+    els.balance.textContent = `Runpod balance $${data.balance.toFixed(2)}${spend}`;
+  } catch (e) {
+    els.balance.textContent = `Runpod balance unavailable (${e.message})`;
+  }
+}
+
+els.btnStop?.addEventListener("click", async () => {
+  els.btnStop.disabled = true;
+  els.stopStatus.textContent = "Stopping Runpod GPU…";
+  try {
+    const res = await fetch("/api/stop", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ job_id: currentRunpodJob }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const w = data.health?.workers || {};
+    const j = data.health?.jobs || {};
+    els.stopStatus.textContent = `${data.steps.join(" · ")}. Now: ${w.running ?? 0} running, ${w.idle ?? 0} idle workers, ${j.inQueue ?? 0} queued, ${j.inProgress ?? 0} in progress.`;
+  } catch (e) {
+    els.stopStatus.textContent = `Stop failed: ${e.message}`;
+  } finally {
+    els.btnStop.disabled = false;
+    refreshBalance();
+  }
+});
+
+refreshBalance();
+setInterval(refreshBalance, 30000);
 loadCatalog();
