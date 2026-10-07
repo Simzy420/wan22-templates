@@ -64,12 +64,19 @@
         <p id="gen-status" class="muted" aria-live="polite"></p>
       </section>
 
+      <section class="section runpod-box">
+        <p id="runpod-balance" class="muted" aria-live="polite">Runpod balance…</p>
+        <button type="button" id="btn-stop-gpu" class="secondary">Stop GPU</button>
+        <p id="stop-status" class="muted" aria-live="polite"></p>
+      </section>
+
       <section class="section" id="result-panel" hidden>
         <h2>Result</h2>
         <div class="card">
           <video id="result-video" playsinline controls></video>
           <div class="row">
             <a id="btn-download" class="secondary" href="#" download="become-the-character.mp4">Download</a>
+            <button type="button" id="btn-save-photos" class="secondary">Save to Photos</button>
           </div>
         </div>
 
