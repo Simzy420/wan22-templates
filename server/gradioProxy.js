@@ -175,6 +175,7 @@ async function readRequest(request) {
   let api = "/generate";
   let payload = {};
   let photo = null;
+  let motion = null;
 
   if (contentType.includes("multipart/form-data")) {
     let form;
@@ -195,6 +196,8 @@ async function readRequest(request) {
     }
     const file = form.get("photo");
     if (isUpload(file)) photo = file;
+    const motionFile = form.get("motion");
+    if (isUpload(motionFile)) motion = motionFile;
   } else {
     let body;
     try {
@@ -212,7 +215,7 @@ async function readRequest(request) {
     }
   }
 
-  return { api: normalizeApi(api), payload, photo };
+  return { api: normalizeApi(api), payload, photo, motion };
 }
 
 async function defaultConnect(space, token) {
@@ -248,7 +251,7 @@ export async function handleGenerateRequest(request, deps = {}) {
   let apiName = "";
   const env = deps.env || process.env;
   try {
-    const { api, payload, photo } = await readRequest(request);
+    const { api, payload, photo, motion } = await readRequest(request);
     apiName = api;
     if (api === "/generate" && !photo) {
       throw new ProxyError("Upload a still photo of the person who should do this motion.", 400);
@@ -258,13 +261,14 @@ export async function handleGenerateRequest(request, deps = {}) {
     // /status. The Space is only for Extend, or for Generate when
     // HF_GENERATE_FALLBACK is set and Runpod is unset.
     if (typeof deps.enqueue === "function") {
-      const queued = await deps.enqueue({ api, payload, photo, env });
+      const queued = await deps.enqueue({ api, payload, photo, motion, env });
       return jsonResponse(queued, 202);
     }
     if (api === "/generate" && runpodConfigured(env)) {
       const queued = await submitGenerateOnRunpod({
         payload,
         photo,
+        motion,
         env,
         fetch: deps.fetch,
       });

@@ -82,9 +82,20 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.5rem;
   margin-bottom: 0.75rem;
 }
 .section-head h2 { margin: 0; }
+.section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+.section-actions .ghost {
+  min-height: 40px;
+  padding: 0.35rem 0.75rem;
+}
 
 .muted { color: var(--muted); font-size: 0.88rem; }
 

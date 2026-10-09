@@ -118,6 +118,23 @@ describe("Runpod Wan Animate client", () => {
     assert.equal(input.prompt, "a person");
   });
 
+  it("accepts a custom Add-template clip as video_base64", () => {
+    const encoded = tinyMp4().toString("base64");
+    const input = buildRunpodInput({
+      image_base64: "abc",
+      video_base64: `data:video/mp4;base64,${encoded}`,
+      video_url: MOTION,
+      prompt: "a person",
+      seed: 7,
+    });
+    assert.equal(input.video_base64, encoded);
+    assert.equal("video_url" in input, false);
+    assert.throws(
+      () => buildRunpodInput({ image_base64: "abc", prompt: "a person" }),
+      /catalog motion|template clip/i
+    );
+  });
+
   it("reads base64 video from output.video and from gifs", () => {
     const encoded = tinyMp4().toString("base64");
     assert.equal(extractRunpodVideoBase64({ video: encoded }), encoded);

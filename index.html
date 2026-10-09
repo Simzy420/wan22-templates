@@ -21,9 +21,13 @@
       <section class="section" aria-labelledby="motions-heading">
         <div class="section-head">
           <h2 id="motions-heading">Motions</h2>
-          <button type="button" id="btn-refresh" class="ghost">Refresh</button>
+          <div class="section-actions">
+            <button type="button" id="btn-add-template" class="ghost">Add template</button>
+            <button type="button" id="btn-refresh" class="ghost">Refresh</button>
+          </div>
         </div>
-        <p class="muted rail-hint">Swipe sideways. Clips autoplay muted. Tap one to continue.</p>
+        <p class="muted rail-hint">Swipe sideways. Clips autoplay muted. Tap one to continue. Or add your own short motion clip.</p>
+        <input type="file" id="template-input" accept="video/*,.mp4,.mov" hidden />
         <div id="template-rail" class="rail" role="list" aria-label="Template motions"></div>
         <p id="templates-status" class="muted" aria-live="polite">Loading templates…</p>
       </section>
@@ -119,23 +123,15 @@
       <h3>Create a new template</h3>
       <p>A template is <strong>one short real person-motion driving clip</strong>. This is not a LoRA trainer and does not take a folder of training videos.</p>
       <ol>
-        <li><strong>Length:</strong> about <strong>3–5 seconds</strong>. Today’s clips (<code>demo-wave</code>, <code>demo-dance</code>, <code>demo-victory</code>, <code>demo-walk</code>) are <strong>4.0s</strong>. Generate sends that public motion clip to Runpod with your still.</li>
-        <li><strong>Picture:</strong> one person, motion that reads clearly (wave, dance, walk, gesture). MP4, H.264. Prefer a stable camera and a readable face or full body.</li>
-        <li><strong>Id:</strong> lowercase, hyphens, stable once published, for example <code>demo-wave</code>. Do not reuse an existing id unless you mean to replace that motion.</li>
+        <li><strong>On this phone:</strong> tap <strong>Add template</strong>, pick a <strong>3–5 second</strong> MP4/MOV of one person moving clearly, then select it in the gallery and Generate with your still. Custom clips stay on this device for the session (about 2.5&nbsp;MB max).</li>
+        <li><strong>Picture:</strong> one person, motion that reads clearly (wave, dance, walk, gesture). Prefer a stable camera and a readable face or full body.</li>
         <li>
-          <strong>Add it to the dataset</strong>
-          <a href="https://huggingface.co/datasets/Simzy/wan22-template-clips" target="_blank" rel="noreferrer">Simzy/wan22-template-clips</a>
-          on branch <code>main</code>:
-          <ul>
-            <li>File path: <code>templates/&lt;id&gt;.mp4</code></li>
-            <li>Append one object to <code>templates/catalog.json</code> (a JSON array) with <code>id</code>, <code>title</code>, <code>description</code>, <code>video_path</code> (<code>templates/&lt;id&gt;.mp4</code>), <code>duration_s</code>, <code>tags</code>, <code>category</code> (greeting, dance, pose, locomotion, …), <code>thumbnail</code> (null or a path), and <code>source</code> (credit and license).</li>
-          </ul>
+          <strong>Optional — publish forever</strong> on
+          <a href="https://huggingface.co/datasets/Simzy/wan22-template-clips" target="_blank" rel="noreferrer">Simzy/wan22-template-clips</a>:
+          upload <code>templates/&lt;id&gt;.mp4</code> and append an entry to <code>templates/catalog.json</code>, then tap <strong>Refresh</strong>.
         </li>
-        <li>Keep the existing ids unless you intend to change those motions. Add a new id beside them.</li>
-        <li>Commit to the dataset. This page and the Space both read that catalog. A catalog-only addition does not need an app redeploy.</li>
-        <li>Tap <strong>Refresh</strong> so the new clip shows up in the gallery.</li>
       </ol>
-      <p class="muted">Clips already in the dataset use the Mixkit Stock Video Free License, except <code>demo-victory</code>, which is from Wan-Video/Wan-Animate-2 <code>examples/demo1/template.mp4</code> (Apache-2.0).</p>
+      <p class="muted">Catalog clips use the Mixkit Stock Video Free License, except <code>demo-victory</code> (Wan-Animate-2 Apache-2.0).</p>
     </dialog>
 
     <script type="module" src="/src/main.js"></script>

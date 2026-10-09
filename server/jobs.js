@@ -9,7 +9,13 @@ import { publicErrorText, scrubGenerateError } from "./gatewayError.js";
 import { DEFAULT_SPACE } from "./videoUrl.js";
 import { uploadFiles } from "./gradioHttp.js";
 import { callSpaceApi, ProxyError } from "./gradioProxy.js";
-import { hfGenerateEnabled, resolveMotionVideoUrl, runpodConfigured, runRunpodGenerate } from "./runpod.js";
+import {
+  hfGenerateEnabled,
+  motionToBase64,
+  resolveMotionVideoUrl,
+  runpodConfigured,
+  runRunpodGenerate,
+} from "./runpod.js";
 
 export const JOB_STORE = "wan22-jobs";
 
@@ -207,14 +213,23 @@ export async function enqueueGenerateJob(job, deps = {}) {
   let image = null;
   let image_base64 = null;
   let video_url = null;
+  let video_base64 = null;
   let backend = "hf";
   if (useRunpod) {
     if (!job.photo) throw new ProxyError("Upload a still photo of the person who should do this motion.", 400);
     try {
       image_base64 = await stillBase64(job.photo);
-      video_url = await resolveMotionVideoUrl(job.payload || {}, { fetch: fetchImpl });
+      if (job.motion) {
+        video_base64 = await motionToBase64(job.motion);
+      } else if (job.payload?.video_base64) {
+        video_base64 = String(job.payload.video_base64).replace(/^data:[^;]+;base64,/i, "").replace(/\s+/g, "");
+        if (!video_base64) throw new ProxyError("The custom motion clip was empty.", 400);
+      } else {
+        video_url = await resolveMotionVideoUrl(job.payload || {}, { fetch: fetchImpl });
+      }
     } catch (error) {
       if (error instanceof ProxyError) throw error;
+      if (Number.isInteger(error?.statusCode)) throw new ProxyError(error.message, error.statusCode);
       throw new ProxyError(errorText(error, env, job.api), 400);
     }
     backend = "runpod";
@@ -247,6 +262,7 @@ export async function enqueueGenerateJob(job, deps = {}) {
     image,
     image_base64,
     video_url,
+    video_base64,
   };
   const store = deps.store || netlifyJobStore(deps.event);
   await store.setJSON(job_id, { id: job_id, phase: "queued" });

@@ -32,6 +32,8 @@ const AUTH_RE = /unauthorized|invalid api key|forbidden|api key/i;
 export const DEFAULT_ANIMATE_ENDPOINT_ID = "zrmwpir4qzs66s";
 
 const MAX_STILL_BYTES = 2_000_000;
+/** Custom Add-template clips stay under the Netlify/Vercel body budget. */
+export const MAX_MOTION_BYTES = 2_500_000;
 
 export function hfGenerateEnabled(env = {}) {
   const flag = String(env.HF_GENERATE_FALLBACK || "").trim().toLowerCase();
@@ -150,17 +152,25 @@ export function targetSize(fields = {}) {
   return { width: RUNPOD_DEFAULTS.width, height: RUNPOD_DEFAULTS.height };
 }
 
+function normalizeVideoBase64(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const compact = value.trim().replace(/^data:[^;]+;base64,/i, "").replace(/\s+/g, "");
+  if (compact.length < 32 || !/^[A-Za-z0-9+/]+=*$/.test(compact)) return null;
+  return compact;
+}
+
 export function buildRunpodInput(fields = {}) {
   if (!fields.image_base64 || typeof fields.image_base64 !== "string") {
     throw new Error("The still photo was empty.");
   }
-  if (!isAllowedTemplateVideoUrl(fields.video_url)) {
-    throw new Error("The template motion video URL is not a public Hugging Face clip.");
+  const video_base64 = normalizeVideoBase64(fields.video_base64);
+  const hasUrl = isAllowedTemplateVideoUrl(fields.video_url);
+  if (!video_base64 && !hasUrl) {
+    throw new Error("Pick a catalog motion or add your own short template clip first.");
   }
   const negative = String(fields.negative_prompt || fields.negative || "").trim();
-  return {
+  const input = {
     image_base64: fields.image_base64,
-    video_url: fields.video_url,
     prompt: String(String(fields.prompt || "").trim() || "a person, natural motion, cinematic, high quality").slice(0, 2000),
     negative_prompt: (negative || RUNPOD_DEFAULTS.negative_prompt).slice(0, 1000),
     seed: normalizeSeed(fields.seed),
@@ -170,6 +180,10 @@ export function buildRunpodInput(fields = {}) {
     steps: RUNPOD_DEFAULTS.steps,
     mode: fields.mode === "animate" ? "animate" : "replace",
   };
+  // Prefer uploaded custom clips (video_base64) over catalog video_url.
+  if (video_base64) input.video_base64 = video_base64;
+  else input.video_url = fields.video_url;
+  return input;
 }
 
 function pickMessage(json, text) {
@@ -282,6 +296,26 @@ export async function stillToBase64(photo) {
   if (!buf.length) throw statusError("The still photo was empty.", 400);
   if (buf.length > MAX_STILL_BYTES) {
     throw statusError("That still is too large. Choose a smaller photo and try again.", 400);
+  }
+  return buf.toString("base64");
+}
+
+/** Turn an Add-template motion upload into Runpod video_base64. */
+export async function motionToBase64(motion) {
+  if (!motion || typeof motion.arrayBuffer !== "function") {
+    throw statusError("Add a short motion clip (about 3–5 seconds) first.", 400);
+  }
+  const type = String(motion.type || "").toLowerCase();
+  if (type && !type.startsWith("video/")) {
+    throw statusError("That file is not a video. Choose an MP4 or MOV clip.", 400);
+  }
+  const buf = Buffer.from(await motion.arrayBuffer());
+  if (!buf.length) throw statusError("The motion clip was empty.", 400);
+  if (buf.length > MAX_MOTION_BYTES) {
+    throw statusError(
+      `That motion clip is too large (max ${Math.round(MAX_MOTION_BYTES / 1024 / 1024)} MB). Trim it to about 3–5 seconds and try again.`,
+      400
+    );
   }
   return buf.toString("base64");
 }
@@ -453,17 +487,25 @@ export async function submitAndWait(env, input, deps = {}) {
  * Vercel has no background worker. POST /run and return the Runpod job id.
  * The phone polls /api/job, which calls /status.
  */
-export async function submitGenerateOnRunpod({ payload, photo, env, fetch: fetchImpl } = {}) {
+export async function submitGenerateOnRunpod({ payload, photo, motion, env, fetch: fetchImpl } = {}) {
   let image_base64;
   let video_url;
+  let video_base64;
   try {
     image_base64 = await stillToBase64(photo);
-    video_url = await resolveMotionVideoUrl(payload || {}, { fetch: fetchImpl || fetch });
+    if (motion) {
+      video_base64 = await motionToBase64(motion);
+    } else if (payload?.video_base64) {
+      video_base64 = normalizeVideoBase64(payload.video_base64);
+      if (!video_base64) throw statusError("The custom motion clip was empty.", 400);
+    } else {
+      video_url = await resolveMotionVideoUrl(payload || {}, { fetch: fetchImpl || fetch });
+    }
   } catch (error) {
     if (Number.isInteger(error?.statusCode)) throw error;
     throw statusError(error instanceof Error ? error.message : String(error), 400);
   }
-  const input = buildRunpodInput({ ...(payload || {}), video_url, image_base64 });
+  const input = buildRunpodInput({ ...(payload || {}), video_url, video_base64, image_base64 });
   const started = await startRunpodJob(env, input, { fetch: fetchImpl || fetch });
   return { job_id: started.id, phase: "queued" };
 }
@@ -488,8 +530,17 @@ export async function runRunpodGenerate(spec, deps = {}) {
   const env = deps.env || process.env;
   if (!spec?.image_base64) throw new Error("The still photo was empty.");
   const fetchImpl = deps.fetch || fetch;
-  const video_url = spec.video_url || (await resolveMotionVideoUrl(spec.payload || {}, { fetch: fetchImpl }));
-  const input = buildRunpodInput({ ...(spec.payload || {}), video_url, image_base64: spec.image_base64 });
+  const video_base64 = normalizeVideoBase64(spec.video_base64) || normalizeVideoBase64(spec.payload?.video_base64);
+  const video_url =
+    video_base64
+      ? undefined
+      : spec.video_url || (await resolveMotionVideoUrl(spec.payload || {}, { fetch: fetchImpl }));
+  const input = buildRunpodInput({
+    ...(spec.payload || {}),
+    video_url,
+    video_base64,
+    image_base64: spec.image_base64,
+  });
   const completed = await submitAndWait(env, input, deps);
   const encoded = extractRunpodVideoBase64(completed?.output ?? completed);
   const bytes = decodeVideoBase64(encoded);

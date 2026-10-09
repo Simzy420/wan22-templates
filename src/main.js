@@ -22,6 +22,9 @@ const GENERATE_WAIT =
 const EXTEND_WAIT = "Extend uses the Hugging Face Space and can take several minutes. Leave this tab open.";
 
 let templates = [];
+/** Session-only clips from Add template (blob URLs + File handles). */
+let customTemplates = [];
+const customMotionFiles = new Map();
 let selectedId = null;
 let photoFile = null;
 let photoBlobUrl = null;
@@ -31,11 +34,15 @@ let sessionId = "";
 /** Runpod job id of the Generate in flight (Vercel). Used by Stop GPU. */
 let currentRunpodJob = "";
 let lastResultBlob = null;
+/** Keep under Netlify/Vercel multipart limits (matches server MAX_MOTION_BYTES). */
+const MAX_CUSTOM_MOTION_BYTES = 2_500_000;
 
 const els = {
   rail: document.getElementById("template-rail"),
   status: document.getElementById("templates-status"),
   refresh: document.getElementById("btn-refresh"),
+  addTemplate: document.getElementById("btn-add-template"),
+  templateInput: document.getElementById("template-input"),
   selectedPanel: document.getElementById("selected-panel"),
   selectedTitle: document.getElementById("selected-title"),
   selectedDesc: document.getElementById("selected-desc"),
@@ -69,8 +76,111 @@ let playObserver = null;
 
 function videoUrl(t) {
   if (t.video_url) return t.video_url;
+  if (t.blob_url) return t.blob_url;
   const rel = t.video_path || t.video || "";
   return CDN_BASE + rel.replace(/^\//, "");
+}
+
+function mergedTemplates() {
+  return [...customTemplates, ...templates.filter((t) => !customTemplates.some((c) => c.id === t.id))];
+}
+
+function slugTitle(name) {
+  const base = String(name || "My clip")
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .trim();
+  return base ? base.slice(0, 48) : "My clip";
+}
+
+function renderRail(list, statusText) {
+  els.rail.innerHTML = "";
+  els.status.textContent = statusText;
+  for (const t of list) {
+    const card = document.createElement("article");
+    card.className = "tcard" + (t.id === selectedId ? " active" : "");
+    card.dataset.id = t.id;
+    card.setAttribute("role", "listitem");
+    const url = videoUrl(t);
+    const title = t.title || t.id;
+    const dur = t.duration_s ?? "?";
+    const badge = t.custom ? " · yours" : "";
+    card.innerHTML = `
+      <div class="tcard-media">
+        <video muted loop playsinline webkit-playsinline autoplay preload="none" data-src="${escapeHtml(url)}" aria-label="${escapeHtml(title)}"></video>
+      </div>
+      <div class="meta">
+        <strong>${escapeHtml(title)}</strong>
+        <span>~${escapeHtml(dur)}s · ${escapeHtml(t.category || "motion")}${badge}</span>
+      </div>
+      <button type="button" class="tcard-hit" aria-pressed="${t.id === selectedId ? "true" : "false"}" aria-label="Select ${escapeHtml(title)}">
+        <span class="tcard-cta">${t.id === selectedId ? "Selected" : "Select"}</span>
+      </button>`;
+    card.querySelector(".tcard-hit").addEventListener("click", () => selectTemplate(t.id));
+    els.rail.appendChild(card);
+  }
+  observeRail();
+  if (selectedId) selectTemplate(selectedId, { scrollUpload: false });
+}
+
+async function probeDuration(file, blobUrl) {
+  return new Promise((resolve) => {
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.muted = true;
+    v.playsInline = true;
+    const done = (seconds) => {
+      v.removeAttribute("src");
+      resolve(seconds);
+    };
+    const timer = setTimeout(() => done(null), 6000);
+    v.addEventListener("loadedmetadata", () => {
+      clearTimeout(timer);
+      const d = Number(v.duration);
+      done(Number.isFinite(d) && d > 0 ? Math.round(d * 10) / 10 : null);
+    });
+    v.addEventListener("error", () => {
+      clearTimeout(timer);
+      done(null);
+    });
+    v.src = blobUrl || URL.createObjectURL(file);
+  });
+}
+
+async function addCustomTemplate(file) {
+  if (!file) return;
+  const type = String(file.type || "").toLowerCase();
+  const name = String(file.name || "").toLowerCase();
+  const looksVideo = type.startsWith("video/") || /\.(mp4|mov|m4v|webm)$/i.test(name);
+  if (!looksVideo) {
+    els.status.textContent = "Choose an MP4 or MOV motion clip.";
+    return;
+  }
+  if (file.size > MAX_CUSTOM_MOTION_BYTES) {
+    els.status.textContent = `That clip is too large (max ${Math.round(MAX_CUSTOM_MOTION_BYTES / 1024 / 1024)} MB). Trim it to about 3–5 seconds.`;
+    return;
+  }
+  const id = `custom-${Date.now().toString(36)}`;
+  const blobUrl = URL.createObjectURL(file);
+  const duration = await probeDuration(file, blobUrl);
+  const entry = {
+    id,
+    title: slugTitle(file.name),
+    description: "Your clip — available in this browser session.",
+    video_path: "",
+    blob_url: blobUrl,
+    duration_s: duration ?? 4,
+    tags: ["custom"],
+    category: "custom",
+    thumbnail: null,
+    source: "Added on device",
+    custom: true,
+  };
+  customMotionFiles.set(id, file);
+  customTemplates = [entry, ...customTemplates];
+  const list = mergedTemplates();
+  renderRail(list, `${list.length} motions · your clip is ready`);
+  selectTemplate(id);
 }
 
 /** Read the motion clip's pixel size so the worker and the still use its aspect. */
@@ -195,42 +305,25 @@ async function loadCatalog() {
     const res = await fetch(CATALOG_URL + (CATALOG_URL.includes("?") ? "&" : "?") + "t=" + Date.now());
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     templates = await res.json();
-    if (!Array.isArray(templates) || !templates.length) {
-      els.status.textContent = "No templates in catalog yet.";
+    if (!Array.isArray(templates)) templates = [];
+    const list = mergedTemplates();
+    if (!list.length) {
+      els.status.textContent = "No templates yet. Tap Add template to use your own clip.";
       lockUpload();
       return;
     }
-    if (selectedId && !templates.some((t) => t.id === selectedId)) {
+    if (selectedId && !list.some((t) => t.id === selectedId)) {
       selectedId = null;
       lockUpload();
     }
-    els.status.textContent = `${templates.length} motions · swipe to see them all`;
-    for (const t of templates) {
-      const card = document.createElement("article");
-      card.className = "tcard" + (t.id === selectedId ? " active" : "");
-      card.dataset.id = t.id;
-      card.setAttribute("role", "listitem");
-      const url = videoUrl(t);
-      const title = t.title || t.id;
-      const dur = t.duration_s ?? "?";
-      card.innerHTML = `
-        <div class="tcard-media">
-          <video muted loop playsinline webkit-playsinline autoplay preload="none" data-src="${escapeHtml(url)}" aria-label="${escapeHtml(title)}"></video>
-        </div>
-        <div class="meta">
-          <strong>${escapeHtml(title)}</strong>
-          <span>~${escapeHtml(dur)}s · ${escapeHtml(t.category || "motion")}</span>
-        </div>
-        <button type="button" class="tcard-hit" aria-pressed="${t.id === selectedId ? "true" : "false"}" aria-label="Select ${escapeHtml(title)}">
-          <span class="tcard-cta">${t.id === selectedId ? "Selected" : "Select"}</span>
-        </button>`;
-      card.querySelector(".tcard-hit").addEventListener("click", () => selectTemplate(t.id));
-      els.rail.appendChild(card);
-    }
-    observeRail();
-    if (selectedId) selectTemplate(selectedId, { scrollUpload: false });
+    const customNote = customTemplates.length ? ` · ${customTemplates.length} yours` : "";
+    renderRail(list, `${list.length} motions · swipe to see them all${customNote}`);
   } catch (e) {
     console.error(e);
+    if (customTemplates.length) {
+      renderRail(mergedTemplates(), `Catalog offline — ${customTemplates.length} of your clips still work`);
+      return;
+    }
     els.status.textContent = `Could not load catalog: ${e.message}`;
   }
 }
@@ -246,7 +339,7 @@ function escapeHtml(s) {
 function selectTemplate(id, opts = {}) {
   const scrollUpload = opts.scrollUpload !== false;
   selectedId = id;
-  const t = templates.find((x) => x.id === id);
+  const t = mergedTemplates().find((x) => x.id === id);
   document.querySelectorAll(".tcard").forEach((el) => {
     const on = el.dataset.id === id;
     el.classList.toggle("active", on);
@@ -305,6 +398,12 @@ els.uploadZone.addEventListener("drop", (e) => {
 });
 
 els.refresh.addEventListener("click", () => loadCatalog());
+els.addTemplate?.addEventListener("click", () => els.templateInput?.click());
+els.templateInput?.addEventListener("change", () => {
+  const f = els.templateInput.files && els.templateInput.files[0];
+  els.templateInput.value = "";
+  if (f) void addCustomTemplate(f);
+});
 window.addEventListener("scroll", syncPlayback, { passive: true });
 window.addEventListener("resize", syncPlayback);
 els.rail.addEventListener("scroll", syncPlayback, { passive: true });
@@ -445,11 +544,11 @@ async function photoForUpload(file, target) {
 }
 
 function generateArgs(size) {
-  const selected = templates.find((t) => t.id === selectedId);
+  const selected = mergedTemplates().find((t) => t.id === selectedId);
   const target = workerSize(size);
-  return {
+  const args = {
     template_id: selectedId,
-    video_url: selected ? videoUrl(selected) : "",
+    video_url: selected && !selected.custom ? videoUrl(selected) : "",
     prompt: els.prompt.value.trim() || "a person, natural motion, cinematic, high quality",
     template_width: size ? size.width : undefined,
     template_height: size ? size.height : undefined,
@@ -464,6 +563,8 @@ function generateArgs(size) {
     seed: 42,
     session_id: sessionId || "",
   };
+  if (selected?.custom) args.custom_template = true;
+  return args;
 }
 
 function extendArgs(auto) {
@@ -532,6 +633,10 @@ async function callSpace(apiName, payload) {
     const photo = await photoForUpload(payload.photo, payload.target);
     form.append("photo", photo, photo.name || "photo.jpg");
   }
+  if (payload.motion) {
+    const motion = payload.motion;
+    form.append("motion", motion, motion.name || "motion.mp4");
+  }
   const res = await fetch("/api/generate", { method: "POST", body: form });
   const text = await res.text();
   let data = null;
@@ -559,16 +664,30 @@ async function callSpace(apiName, payload) {
 
 els.btnGen.addEventListener("click", async () => {
   if (!selectedId || !photoFile) return;
+  const selected = mergedTemplates().find((t) => t.id === selectedId);
+  const motion = selected?.custom ? customMotionFiles.get(selectedId) : null;
+  if (selected?.custom && !motion) {
+    els.genStatus.textContent = "That custom clip is missing. Add the template again.";
+    return;
+  }
   setBusy(`Queuing on Runpod… ${GENERATE_WAIT}`);
   try {
-    const size = await templateSize(templates.find((t) => t.id === selectedId));
+    const size = await templateSize(selected);
     const args = generateArgs(size);
     if (USE_PROXY) {
-      const data = await callSpace("/generate", { json: args, photo: photoFile, target: workerSize(size) });
+      const data = await callSpace("/generate", {
+        json: args,
+        photo: photoFile,
+        motion,
+        target: workerSize(size),
+      });
       rememberSession(data);
       showResult(data.video || data.url);
       els.genStatus.textContent = statusText(data.status, "Done.");
     } else {
+      if (motion) {
+        throw new Error("Custom templates need USE_PROXY (same-origin /api/generate).");
+      }
       const { Client } = await import("@gradio/client");
       const client = await Client.connect(SPACE);
       const result = await client.predict("/generate", { ...args, image: photoFile });
