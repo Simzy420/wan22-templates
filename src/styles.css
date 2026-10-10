@@ -309,14 +309,32 @@ button, a.secondary, a.primary {
   align-items: center;
   justify-content: center;
   padding: 0.85rem 1.25rem;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 .primary {
   width: 100%;
+  min-height: 52px;
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
   color: #fff;
   font-weight: 650;
   box-shadow: 0 8px 28px rgba(167, 139, 250, 0.25);
+}
+.primary[aria-disabled="true"]:not(:disabled) {
+  opacity: 0.78;
+  box-shadow: none;
+  background: linear-gradient(90deg, #5b4b8a, #7a3a62);
+}
+.primary.is-ready {
+  opacity: 1;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  box-shadow: 0 8px 28px rgba(167, 139, 250, 0.25);
+  animation: gen-ready 0.7s ease;
+}
+@keyframes gen-ready {
+  from { transform: scale(0.98); filter: brightness(1.15); }
+  to { transform: none; filter: none; }
 }
 .secondary {
   background: var(--card-2);

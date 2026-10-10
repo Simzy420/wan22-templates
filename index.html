@@ -55,11 +55,16 @@
         <h2>Your photo</h2>
         <p id="upload-hint" class="muted">Pick a motion above to unlock this step.</p>
         <label class="upload-zone" id="upload-zone">
-          <input type="file" id="photo-input" accept="image/*" hidden disabled />
+          <input
+            type="file"
+            id="photo-input"
+            class="file-visually-hidden"
+            accept="image/*,image/jpeg,image/png,image/heic,image/heif,.jpg,.jpeg,.png,.heic,.webp"
+          />
           <div class="upload-inner" id="upload-inner">
             <div class="upload-icon" aria-hidden="true">⬆</div>
             <strong>Tap to upload a still of yourself</strong>
-            <span class="muted">JPG / PNG · face or full body works best</span>
+            <span class="muted">JPG / PNG / HEIC · face or full body works best</span>
           </div>
           <img id="photo-preview" alt="" hidden />
         </label>
@@ -71,7 +76,7 @@
       </section>
 
       <section class="section actions">
-        <button type="button" id="btn-generate" class="primary" disabled>Generate</button>
+        <button type="button" id="btn-generate" class="primary" aria-disabled="true">Pick a motion first</button>
         <p class="muted">The first Generate may take several minutes while the Runpod worker starts. Later runs are faster. Leave this tab open after you tap Generate.</p>
         <p id="gen-status" class="muted" aria-live="polite"></p>
       </section>

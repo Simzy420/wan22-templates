@@ -370,8 +370,34 @@ function workerSize(size) {
   return { width: 640, height: 640 };
 }
 
+let generateBusy = false;
+
 function updateGenerateEnabled() {
-  els.btnGen.disabled = !(selectedId && photoFile);
+  const ready = Boolean(selectedId && photoFile) && !generateBusy;
+  // Keep the control enabled so iPhone taps always register; guide with label + status.
+  els.btnGen.disabled = generateBusy;
+  els.btnGen.classList.toggle("is-ready", ready);
+  els.btnGen.setAttribute("aria-disabled", ready ? "false" : "true");
+  if (generateBusy) {
+    els.btnGen.textContent = "Working…";
+  } else if (selectedId && photoFile) {
+    els.btnGen.textContent = "Generate";
+  } else if (!selectedId) {
+    els.btnGen.textContent = "Pick a motion first";
+  } else {
+    els.btnGen.textContent = "Add your photo to Generate";
+  }
+}
+
+function looksLikeImage(file) {
+  if (!file) return false;
+  const type = String(file.type || "").toLowerCase();
+  const name = String(file.name || "").toLowerCase();
+  if (type.startsWith("image/")) return true;
+  if (/\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(name)) return true;
+  // iOS Photos often omits type when the picker already filtered to images.
+  if (!type || type === "application/octet-stream") return true;
+  return false;
 }
 
 function armVideo(vid) {
@@ -427,9 +453,11 @@ function lockUpload() {
   els.uploadSection.classList.add("is-locked");
   els.uploadSection.classList.remove("is-ready");
   els.uploadSection.setAttribute("aria-disabled", "true");
-  els.photoInput.disabled = true;
+  // Do not disable the file input — iOS Safari often won't open it again after re-enable.
+  els.photoInput.disabled = false;
   els.uploadHint.textContent = "Pick a motion above to unlock this step.";
   els.selectedPanel.hidden = true;
+  updateGenerateEnabled();
 }
 
 function focusUpload() {
@@ -440,6 +468,7 @@ function focusUpload() {
   els.uploadHint.textContent = "Upload a still of the person who should do this motion.";
   els.uploadSection.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
   els.uploadSection.focus({ preventScroll: true });
+  updateGenerateEnabled();
 }
 
 async function loadCatalog() {
@@ -512,8 +541,14 @@ function selectTemplate(id, opts = {}) {
 }
 
 function setPhoto(file) {
-  if (!selectedId || els.photoInput.disabled) return;
-  if (!file || !file.type.startsWith("image/")) return;
+  if (!selectedId) {
+    els.genStatus.textContent = "Pick a motion template first, then upload your photo.";
+    return;
+  }
+  if (!looksLikeImage(file)) {
+    els.genStatus.textContent = "Choose a photo (JPG, PNG, or HEIC).";
+    return;
+  }
   photoFile = file;
   if (photoBlobUrl) URL.revokeObjectURL(photoBlobUrl);
   photoBlobUrl = URL.createObjectURL(file);
@@ -521,11 +556,20 @@ function setPhoto(file) {
   els.photoPreview.hidden = false;
   els.uploadInner.hidden = true;
   updateGenerateEnabled();
+  els.genStatus.textContent = "Photo ready — tap Generate.";
+  els.btnGen.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
 }
 
 els.photoInput.addEventListener("change", () => {
   const f = els.photoInput.files && els.photoInput.files[0];
+  els.photoInput.value = "";
   if (f) setPhoto(f);
+});
+els.uploadZone.addEventListener("click", (e) => {
+  if (!selectedId) {
+    e.preventDefault();
+    els.genStatus.textContent = "Pick a motion template first, then upload your photo.";
+  }
 });
 els.uploadZone.addEventListener("dragover", (e) => {
   if (!selectedId) return;
@@ -581,16 +625,18 @@ els.extendTarget.addEventListener("input", () => {
 });
 
 function setBusy(msg) {
+  generateBusy = true;
   els.genStatus.textContent = msg || "";
-  els.btnGen.disabled = true;
   els.btnExtend.disabled = true;
   els.btnAuto.disabled = true;
+  updateGenerateEnabled();
 }
 
 function clearBusy() {
-  updateGenerateEnabled();
+  generateBusy = false;
   els.btnExtend.disabled = false;
   els.btnAuto.disabled = false;
+  updateGenerateEnabled();
 }
 
 function showResult(fileOrUrl) {
@@ -817,7 +863,17 @@ async function callSpace(apiName, payload) {
 }
 
 els.btnGen.addEventListener("click", async () => {
-  if (!selectedId || !photoFile) return;
+  if (generateBusy) return;
+  if (!selectedId) {
+    els.genStatus.textContent = "Pick a motion template first.";
+    els.rail?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    return;
+  }
+  if (!photoFile) {
+    els.genStatus.textContent = "Upload your still photo first, then tap Generate.";
+    focusUpload();
+    return;
+  }
   const selected = mergedTemplates().find((t) => t.id === selectedId);
   let motion = selected?.custom ? customMotionFiles.get(selectedId) : null;
   if (selected?.custom && !motion) {
@@ -954,4 +1010,5 @@ els.btnStop?.addEventListener("click", async () => {
 
 refreshBalance();
 setInterval(refreshBalance, 30000);
+updateGenerateEnabled();
 loadCatalog();
