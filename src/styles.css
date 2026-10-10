@@ -75,18 +75,23 @@ body {
   white-space: nowrap;
   border: 0;
 }
-/* Keep file inputs focusable/clickable on iOS — do not use the hidden attribute. */
-.file-visually-hidden {
+/*
+ * Full-zone file overlays — iOS Safari often ignores 1px/clipped inputs.
+ * Cover the whole label; keep opacity 0 so the styled UI shows through.
+ */
+.file-overlay {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
   opacity: 0;
+  border: 0;
+  cursor: pointer;
+  z-index: 6;
+  font-size: 16px; /* stops iOS zoom on focus */
+  -webkit-tap-highlight-color: transparent;
 }
 .add-template-zone {
   position: relative;
@@ -102,6 +107,12 @@ body {
   background: linear-gradient(180deg, var(--card-2), var(--card));
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  overflow: hidden;
+}
+.add-template-zone > :not(.file-overlay) {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
 }
 .add-template-zone:hover,
 .add-template-zone.drag {
@@ -252,6 +263,14 @@ body {
   overflow: hidden;
   transition: border-color 0.15s, background 0.15s;
 }
+.upload-zone > :not(.file-overlay):not(#photo-preview) {
+  pointer-events: none;
+}
+.upload-zone #photo-preview {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
 .upload-zone:hover, .upload-zone.drag {
   border-color: var(--accent);
   background: #1a1528;
@@ -298,7 +317,22 @@ textarea {
   font: inherit;
 }
 
-.actions { text-align: center; }
+.actions { text-align: center; position: relative; z-index: 2; }
+.ready-strip {
+  margin: 0 0 0.75rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 12px;
+  background: #1a1528;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.88rem;
+  text-align: left;
+}
+.ready-strip.is-go {
+  border-color: rgba(167, 139, 250, 0.55);
+  color: #e8e0ff;
+  background: linear-gradient(90deg, #1a1528, #241528);
+}
 button, a.secondary, a.primary {
   font: inherit;
   border: none;
@@ -311,26 +345,33 @@ button, a.secondary, a.primary {
   padding: 0.85rem 1.25rem;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
 }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 .primary {
   width: 100%;
-  min-height: 52px;
+  min-height: 56px;
+  position: relative;
+  z-index: 3;
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
   color: #fff;
   font-weight: 650;
   box-shadow: 0 8px 28px rgba(167, 139, 250, 0.25);
 }
 .primary[aria-disabled="true"]:not(:disabled) {
-  opacity: 0.78;
+  opacity: 0.85;
   box-shadow: none;
   background: linear-gradient(90deg, #5b4b8a, #7a3a62);
 }
 .primary.is-ready {
   opacity: 1;
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
-  box-shadow: 0 8px 28px rgba(167, 139, 250, 0.25);
+  box-shadow: 0 8px 28px rgba(167, 139, 250, 0.35);
   animation: gen-ready 0.7s ease;
+}
+.primary:active {
+  transform: scale(0.985);
 }
 @keyframes gen-ready {
   from { transform: scale(0.98); filter: brightness(1.15); }

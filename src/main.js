@@ -22,7 +22,7 @@ const GENERATE_WAIT =
 const EXTEND_WAIT = "Extend uses the Hugging Face Space and can take several minutes. Leave this tab open.";
 
 let templates = [];
-/** Session-only clips from Add template (blob URLs + File handles). */
+/** Custom clips from Add template (blob URLs + File handles), persisted in IndexedDB. */
 let customTemplates = [];
 const customMotionFiles = new Map();
 let selectedId = null;
@@ -38,6 +38,12 @@ let lastResultBlob = null;
 const MAX_GALLERY_MOTION_BYTES = 50_000_000;
 /** Matches server MAX_MOTION_BYTES for /api/generate multipart. */
 const MAX_UPLOAD_MOTION_BYTES = 3_500_000;
+const MAX_SAVED_CUSTOM = 6;
+const STORE_DB = "swapr-btc-v1";
+const STORE_META = "meta";
+const STORE_BLOBS = "blobs";
+let persistTimer = 0;
+let bootDone = false;
 
 const els = {
   rail: document.getElementById("template-rail"),
@@ -55,6 +61,7 @@ const els = {
   photoInput: document.getElementById("photo-input"),
   photoPreview: document.getElementById("photo-preview"),
   prompt: document.getElementById("prompt"),
+  readyStrip: document.getElementById("ready-strip"),
   btnGen: document.getElementById("btn-generate"),
   genStatus: document.getElementById("gen-status"),
   resultPanel: document.getElementById("result-panel"),
@@ -72,6 +79,159 @@ const els = {
   howtoDialog: document.getElementById("howto-dialog"),
   howtoClose: document.getElementById("btn-howto-close"),
 };
+
+function openStore() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error("IndexedDB unavailable"));
+      return;
+    }
+    const req = indexedDB.open(STORE_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_META)) db.createObjectStore(STORE_META);
+      if (!db.objectStoreNames.contains(STORE_BLOBS)) db.createObjectStore(STORE_BLOBS);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error("IndexedDB open failed"));
+  });
+}
+
+function idbGet(store, key) {
+  return openStore().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(store, "readonly");
+        const req = tx.objectStore(store).get(key);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      })
+  );
+}
+
+function idbPut(store, key, value) {
+  return openStore().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(store, "readwrite");
+        tx.objectStore(store).put(value, key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      })
+  );
+}
+
+function idbDelete(store, key) {
+  return openStore().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(store, "readwrite");
+        tx.objectStore(store).delete(key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      })
+  );
+}
+
+function schedulePersist() {
+  if (!bootDone) return;
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    void persistSession().catch((err) => console.warn("persistSession", err));
+  }, 250);
+}
+
+async function persistSession() {
+  const customs = [];
+  for (const entry of customTemplates.slice(0, MAX_SAVED_CUSTOM)) {
+    const file = customMotionFiles.get(entry.id);
+    if (!file) continue;
+    customs.push({
+      id: entry.id,
+      title: entry.title,
+      description: entry.description,
+      duration_s: entry.duration_s,
+      category: entry.category,
+      tags: entry.tags,
+      source: entry.source,
+      custom: true,
+      name: file.name || `${entry.id}.mp4`,
+      type: file.type || "video/mp4",
+      size: file.size,
+    });
+    await idbPut(STORE_BLOBS, `motion:${entry.id}`, file);
+  }
+  if (photoFile) {
+    await idbPut(STORE_BLOBS, "photo", {
+      name: photoFile.name || "photo.jpg",
+      type: photoFile.type || "image/jpeg",
+      blob: photoFile,
+    });
+  } else {
+    await idbDelete(STORE_BLOBS, "photo").catch(() => {});
+  }
+  await idbPut(STORE_META, "session", {
+    selectedId,
+    prompt: els.prompt?.value || "",
+    customs,
+    savedAt: Date.now(),
+  });
+}
+
+async function restoreSession() {
+  try {
+    const meta = await idbGet(STORE_META, "session");
+    if (!meta || typeof meta !== "object") return;
+    if (typeof meta.prompt === "string" && els.prompt) els.prompt.value = meta.prompt;
+    const list = Array.isArray(meta.customs) ? meta.customs : [];
+    const restored = [];
+    for (const item of list) {
+      if (!item?.id) continue;
+      const blob = await idbGet(STORE_BLOBS, `motion:${item.id}`);
+      if (!blob) continue;
+      const file =
+        blob instanceof File
+          ? blob
+          : new File([blob], item.name || `${item.id}.mp4`, {
+              type: item.type || (blob.type || "video/mp4"),
+            });
+      const blobUrl = URL.createObjectURL(file);
+      customMotionFiles.set(item.id, file);
+      restored.push({
+        id: item.id,
+        title: item.title || slugTitle(item.name) || "My clip",
+        description: item.description || `Your clip · saved on this phone`,
+        video_path: "",
+        blob_url: blobUrl,
+        duration_s: item.duration_s ?? 4,
+        tags: item.tags || ["custom"],
+        category: item.category || "custom",
+        thumbnail: null,
+        source: item.source || "Saved on this phone",
+        custom: true,
+      });
+    }
+    customTemplates = restored;
+    const photoRec = await idbGet(STORE_BLOBS, "photo");
+    if (photoRec?.blob) {
+      const file =
+        photoRec.blob instanceof File
+          ? photoRec.blob
+          : new File([photoRec.blob], photoRec.name || "photo.jpg", {
+              type: photoRec.type || photoRec.blob.type || "image/jpeg",
+            });
+      photoFile = file;
+      if (photoBlobUrl) URL.revokeObjectURL(photoBlobUrl);
+      photoBlobUrl = URL.createObjectURL(file);
+      els.photoPreview.src = photoBlobUrl;
+      els.photoPreview.hidden = false;
+      els.uploadInner.hidden = true;
+    }
+    if (meta.selectedId) selectedId = meta.selectedId;
+  } catch (err) {
+    console.warn("restoreSession", err);
+  }
+}
 
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 let playObserver = null;
@@ -306,25 +466,26 @@ async function addCustomTemplate(file) {
   const entry = {
     id,
     title: slugTitle(file.name) || "My clip",
-    description: `Your clip (${mb(file.size)} MB) — available in this browser session.`,
+    description: `Your clip (${mb(file.size)} MB) — saved on this phone.`,
     video_path: "",
     blob_url: blobUrl,
     duration_s: duration ?? 4,
     tags: ["custom"],
     category: "custom",
     thumbnail: null,
-    source: "Added on device",
+    source: "Saved on this phone",
     custom: true,
   };
   customMotionFiles.set(id, file);
-  customTemplates = [entry, ...customTemplates];
+  customTemplates = [entry, ...customTemplates].slice(0, MAX_SAVED_CUSTOM);
   const list = mergedTemplates();
   const note =
     file.size > MAX_UPLOAD_MOTION_BYTES
       ? `${list.length} motions · yours is ready (will compress on Generate)`
-      : `${list.length} motions · your clip is ready`;
+      : `${list.length} motions · your clip is ready · saved on this phone`;
   renderRail(list, note);
   selectTemplate(id);
+  schedulePersist();
 }
 
 /** Read the motion clip's pixel size so the worker and the still use its aspect. */
@@ -372,10 +533,19 @@ function workerSize(size) {
 
 let generateBusy = false;
 
+function updateReadyStrip() {
+  if (!els.readyStrip) return;
+  const m = selectedId ? "✓ Motion" : "1) Pick a motion";
+  const p = photoFile ? "✓ Photo" : "2) Add your photo";
+  const g = selectedId && photoFile ? "3) Tap Generate ↓" : "3) Generate";
+  els.readyStrip.textContent = `${m} · ${p} · ${g}`;
+  els.readyStrip.classList.toggle("is-go", Boolean(selectedId && photoFile && !generateBusy));
+}
+
 function updateGenerateEnabled() {
   const ready = Boolean(selectedId && photoFile) && !generateBusy;
-  // Keep the control enabled so iPhone taps always register; guide with label + status.
-  els.btnGen.disabled = generateBusy;
+  // Never HTML-disable Generate — iPhone often swallows taps on disabled buttons.
+  els.btnGen.disabled = false;
   els.btnGen.classList.toggle("is-ready", ready);
   els.btnGen.setAttribute("aria-disabled", ready ? "false" : "true");
   if (generateBusy) {
@@ -387,6 +557,7 @@ function updateGenerateEnabled() {
   } else {
     els.btnGen.textContent = "Add your photo to Generate";
   }
+  updateReadyStrip();
 }
 
 function looksLikeImage(file) {
@@ -530,14 +701,26 @@ function selectTemplate(id, opts = {}) {
   if (!t) {
     lockUpload();
     updateGenerateEnabled();
+    schedulePersist();
     return;
   }
+  els.uploadSection.classList.remove("is-locked");
+  els.uploadSection.classList.add("is-ready");
+  els.uploadSection.setAttribute("aria-disabled", "false");
+  els.photoInput.disabled = false;
+  els.uploadHint.textContent = photoFile
+    ? "Photo saved on this phone — tap to replace, or tap Generate."
+    : "Upload a still of the person who should do this motion.";
   els.selectedPanel.hidden = false;
   els.selectedTitle.textContent = t.title || t.id;
   els.selectedDesc.textContent = t.description || "";
   syncPlayback();
   updateGenerateEnabled();
-  if (scrollUpload) focusUpload();
+  schedulePersist();
+  if (scrollUpload && !photoFile) focusUpload();
+  else if (scrollUpload && photoFile) {
+    els.btnGen.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+  }
 }
 
 function setPhoto(file) {
@@ -556,7 +739,8 @@ function setPhoto(file) {
   els.photoPreview.hidden = false;
   els.uploadInner.hidden = true;
   updateGenerateEnabled();
-  els.genStatus.textContent = "Photo ready — tap Generate.";
+  schedulePersist();
+  els.genStatus.textContent = "Photo saved — tap Generate.";
   els.btnGen.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
 }
 
@@ -862,7 +1046,7 @@ async function callSpace(apiName, payload) {
   return data;
 }
 
-els.btnGen.addEventListener("click", async () => {
+async function runGenerate() {
   if (generateBusy) return;
   if (!selectedId) {
     els.genStatus.textContent = "Pick a motion template first.";
@@ -892,6 +1076,7 @@ els.btnGen.addEventListener("click", async () => {
       }
       motion = compressed;
       customMotionFiles.set(selectedId, compressed);
+      schedulePersist();
       setBusy(`Queuing on Runpod… ${GENERATE_WAIT}`);
     }
     const size = await templateSize(selected);
@@ -929,7 +1114,31 @@ els.btnGen.addEventListener("click", async () => {
   } finally {
     clearBusy();
   }
-});
+}
+
+/** iOS Safari sometimes drops click; pointerup + click both route here once. */
+let lastGenTap = 0;
+function onGeneratePointer(e) {
+  if (e && e.type === "pointerup" && e.pointerType === "mouse" && e.button !== 0) return;
+  const now = Date.now();
+  if (now - lastGenTap < 500) return;
+  lastGenTap = now;
+  if (e) {
+    try {
+      e.preventDefault();
+    } catch {
+      /* ignore */
+    }
+  }
+  void runGenerate();
+}
+els.btnGen.addEventListener("pointerup", onGeneratePointer);
+els.btnGen.addEventListener("click", onGeneratePointer);
+els.btnGen.addEventListener("touchend", (e) => {
+  // Fallback when pointer events are unavailable.
+  if (window.PointerEvent) return;
+  onGeneratePointer(e);
+}, { passive: false });
 
 async function extendOnce(auto) {
   if (!lastResultUrl) {
@@ -1008,7 +1217,28 @@ els.btnStop?.addEventListener("click", async () => {
   }
 });
 
+els.prompt?.addEventListener("change", schedulePersist);
+els.prompt?.addEventListener("blur", schedulePersist);
+
 refreshBalance();
 setInterval(refreshBalance, 30000);
-updateGenerateEnabled();
-loadCatalog();
+
+(async function boot() {
+  updateGenerateEnabled();
+  await restoreSession();
+  bootDone = true;
+  updateGenerateEnabled();
+  await loadCatalog();
+  if (selectedId && mergedTemplates().some((t) => t.id === selectedId)) {
+    selectTemplate(selectedId, { scrollUpload: false });
+    if (photoFile) {
+      els.uploadSection.classList.remove("is-locked");
+      els.uploadSection.classList.add("is-ready");
+      els.genStatus.textContent = "Restored your template and photo — tap Generate.";
+    }
+  } else if (customTemplates.length) {
+    const note = `${mergedTemplates().length} motions · restored ${customTemplates.length} of yours`;
+    renderRail(mergedTemplates(), note);
+  }
+  schedulePersist();
+})();

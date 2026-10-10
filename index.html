@@ -30,11 +30,11 @@
           <input
             type="file"
             id="template-input"
-            class="file-visually-hidden"
+            class="file-overlay"
             accept="video/mp4,video/quicktime,video/webm,video/x-m4v,video/*,.mp4,.mov,.m4v,.webm"
           />
           <strong id="btn-add-template">Add template video</strong>
-          <span class="muted">Tap to pick a ~3–5s clip from Photos or Files · phone clips are OK</span>
+          <span class="muted">Tap to pick a ~3–5s clip from Photos or Files · saved on this phone</span>
         </label>
         <div id="template-rail" class="rail" role="list" aria-label="Template motions"></div>
         <p id="templates-status" class="muted" aria-live="polite">Loading templates…</p>
@@ -54,17 +54,17 @@
       <section class="section is-locked" id="upload-section" tabindex="-1" aria-disabled="true">
         <h2>Your photo</h2>
         <p id="upload-hint" class="muted">Pick a motion above to unlock this step.</p>
-        <label class="upload-zone" id="upload-zone">
+        <label class="upload-zone" id="upload-zone" for="photo-input">
           <input
             type="file"
             id="photo-input"
-            class="file-visually-hidden"
+            class="file-overlay"
             accept="image/*,image/jpeg,image/png,image/heic,image/heif,.jpg,.jpeg,.png,.heic,.webp"
           />
           <div class="upload-inner" id="upload-inner">
             <div class="upload-icon" aria-hidden="true">⬆</div>
             <strong>Tap to upload a still of yourself</strong>
-            <span class="muted">JPG / PNG / HEIC · face or full body works best</span>
+            <span class="muted">JPG / PNG / HEIC · saved on this phone · face or full body works best</span>
           </div>
           <img id="photo-preview" alt="" hidden />
         </label>
@@ -76,8 +76,9 @@
       </section>
 
       <section class="section actions">
+        <p id="ready-strip" class="ready-strip" aria-live="polite">1) Pick a motion · 2) Add your photo · 3) Tap Generate</p>
         <button type="button" id="btn-generate" class="primary" aria-disabled="true">Pick a motion first</button>
-        <p class="muted">The first Generate may take several minutes while the Runpod worker starts. Later runs are faster. Leave this tab open after you tap Generate.</p>
+        <p class="muted">Your template and photo stay on this phone after you leave. The first Generate may take several minutes while the Runpod worker starts — leave this tab open after you tap Generate.</p>
         <p id="gen-status" class="muted" aria-live="polite"></p>
       </section>
 
@@ -136,7 +137,7 @@
       <h3>Create a new template</h3>
       <p>A template is <strong>one short real person-motion driving clip</strong>. This is not a LoRA trainer and does not take a folder of training videos.</p>
       <ol>
-        <li><strong>On this phone:</strong> tap the <strong>Add template video</strong> box, pick a <strong>3–5 second</strong> MP4/MOV of one person moving clearly, then select it in the gallery and Generate with your still. Large phone clips are compressed on Generate. Open this site in its own tab (not inside Command Center’s small frame) so the Photos picker works.</li>
+        <li><strong>On this phone:</strong> tap the <strong>Add template video</strong> box, pick a <strong>3–5 second</strong> MP4/MOV of one person moving clearly, then select it in the gallery and Generate with your still. Your clip and photo stay on this phone after you leave. Large phone clips are compressed on Generate. Open this site in its own Safari/Chrome tab (not inside Command Center’s small frame) so the Photos picker and Generate work.</li>
         <li><strong>Picture:</strong> one person, motion that reads clearly (wave, dance, walk, gesture). Prefer a stable camera and a readable face or full body.</li>
         <li>
           <strong>Optional — publish forever</strong> on
