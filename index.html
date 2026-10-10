@@ -22,12 +22,20 @@
         <div class="section-head">
           <h2 id="motions-heading">Motions</h2>
           <div class="section-actions">
-            <button type="button" id="btn-add-template" class="ghost">Add template</button>
             <button type="button" id="btn-refresh" class="ghost">Refresh</button>
           </div>
         </div>
-        <p class="muted rail-hint">Swipe sideways. Clips autoplay muted. Tap one to continue. Or add your own short motion clip.</p>
-        <input type="file" id="template-input" accept="video/*,.mp4,.mov" hidden />
+        <p class="muted rail-hint">Swipe sideways. Clips autoplay muted. Tap one to continue — or add your own clip below.</p>
+        <label class="add-template-zone" id="add-template-zone" for="template-input">
+          <input
+            type="file"
+            id="template-input"
+            class="file-visually-hidden"
+            accept="video/mp4,video/quicktime,video/webm,video/x-m4v,video/*,.mp4,.mov,.m4v,.webm"
+          />
+          <strong id="btn-add-template">Add template video</strong>
+          <span class="muted">Tap to pick a ~3–5s clip from Photos or Files · phone clips are OK</span>
+        </label>
         <div id="template-rail" class="rail" role="list" aria-label="Template motions"></div>
         <p id="templates-status" class="muted" aria-live="polite">Loading templates…</p>
       </section>
@@ -123,7 +131,7 @@
       <h3>Create a new template</h3>
       <p>A template is <strong>one short real person-motion driving clip</strong>. This is not a LoRA trainer and does not take a folder of training videos.</p>
       <ol>
-        <li><strong>On this phone:</strong> tap <strong>Add template</strong>, pick a <strong>3–5 second</strong> MP4/MOV of one person moving clearly, then select it in the gallery and Generate with your still. Custom clips stay on this device for the session (about 2.5&nbsp;MB max).</li>
+        <li><strong>On this phone:</strong> tap the <strong>Add template video</strong> box, pick a <strong>3–5 second</strong> MP4/MOV of one person moving clearly, then select it in the gallery and Generate with your still. Large phone clips are compressed on Generate. Open this site in its own tab (not inside Command Center’s small frame) so the Photos picker works.</li>
         <li><strong>Picture:</strong> one person, motion that reads clearly (wave, dance, walk, gesture). Prefer a stable camera and a readable face or full body.</li>
         <li>
           <strong>Optional — publish forever</strong> on

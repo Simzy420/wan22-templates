@@ -75,6 +75,46 @@ body {
   white-space: nowrap;
   border: 0;
 }
+/* Keep file inputs focusable/clickable on iOS — do not use the hidden attribute. */
+.file-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+}
+.add-template-zone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  margin: 0 0 0.85rem;
+  padding: 0.95rem 1rem;
+  min-height: 72px;
+  border: 1.5px dashed #4a4a66;
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--card-2), var(--card));
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.add-template-zone:hover,
+.add-template-zone.drag {
+  border-color: var(--accent);
+  background: #1a1528;
+}
+.add-template-zone strong {
+  font-size: 1rem;
+  color: #fff;
+}
+.add-template-zone .muted {
+  font-size: 0.82rem;
+}
 
 .section { margin-top: 1.5rem; }
 .section h2 { margin: 0 0 0.75rem; font-size: 1.05rem; }

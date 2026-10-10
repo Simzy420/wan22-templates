@@ -33,7 +33,7 @@ export const DEFAULT_ANIMATE_ENDPOINT_ID = "zrmwpir4qzs66s";
 
 const MAX_STILL_BYTES = 2_000_000;
 /** Custom Add-template clips stay under the Netlify/Vercel body budget. */
-export const MAX_MOTION_BYTES = 2_500_000;
+export const MAX_MOTION_BYTES = 3_500_000;
 
 export function hfGenerateEnabled(env = {}) {
   const flag = String(env.HF_GENERATE_FALLBACK || "").trim().toLowerCase();

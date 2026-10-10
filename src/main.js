@@ -34,14 +34,16 @@ let sessionId = "";
 /** Runpod job id of the Generate in flight (Vercel). Used by Stop GPU. */
 let currentRunpodJob = "";
 let lastResultBlob = null;
-/** Keep under Netlify/Vercel multipart limits (matches server MAX_MOTION_BYTES). */
-const MAX_CUSTOM_MOTION_BYTES = 2_500_000;
+/** Gallery can hold larger phone clips; Generate compresses down to the API budget. */
+const MAX_GALLERY_MOTION_BYTES = 50_000_000;
+/** Matches server MAX_MOTION_BYTES for /api/generate multipart. */
+const MAX_UPLOAD_MOTION_BYTES = 3_500_000;
 
 const els = {
   rail: document.getElementById("template-rail"),
   status: document.getElementById("templates-status"),
   refresh: document.getElementById("btn-refresh"),
-  addTemplate: document.getElementById("btn-add-template"),
+  addTemplateZone: document.getElementById("add-template-zone"),
   templateInput: document.getElementById("template-input"),
   selectedPanel: document.getElementById("selected-panel"),
   selectedTitle: document.getElementById("selected-title"),
@@ -147,26 +149,164 @@ async function probeDuration(file, blobUrl) {
   });
 }
 
-async function addCustomTemplate(file) {
-  if (!file) return;
+function mb(bytes) {
+  return (bytes / 1024 / 1024).toFixed(1);
+}
+
+function looksLikeVideo(file) {
   const type = String(file.type || "").toLowerCase();
   const name = String(file.name || "").toLowerCase();
-  const looksVideo = type.startsWith("video/") || /\.(mp4|mov|m4v|webm)$/i.test(name);
-  if (!looksVideo) {
-    els.status.textContent = "Choose an MP4 or MOV motion clip.";
+  if (type.startsWith("video/")) return true;
+  if (/\.(mp4|mov|m4v|webm|qt)$/i.test(name)) return true;
+  // iOS Photos often omits type/extension when the picker already filtered to video.
+  if (!type || type === "application/octet-stream") return true;
+  return false;
+}
+
+function setTemplateStatus(msg, { alertUser = false } = {}) {
+  els.status.textContent = msg;
+  if (alertUser && typeof window.alert === "function") {
+    try {
+      window.alert(msg);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * Re-encode a large phone clip so Generate fits the host body limit.
+ * Falls back to the original file if MediaRecorder is unavailable.
+ */
+async function compressMotionForUpload(file, maxBytes) {
+  if (!file || file.size <= maxBytes) return file;
+  if (typeof MediaRecorder === "undefined" || typeof HTMLCanvasElement === "undefined") {
+    return file;
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+    video.setAttribute("playsinline", "");
+    video.preload = "auto";
+    video.src = url;
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("metadata timeout")), 12000);
+      video.addEventListener(
+        "loadeddata",
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        { once: true }
+      );
+      video.addEventListener(
+        "error",
+        () => {
+          clearTimeout(timer);
+          reject(new Error("video load failed"));
+        },
+        { once: true }
+      );
+    });
+    const maxEdge = 640;
+    let w = video.videoWidth || 480;
+    let h = video.videoHeight || 832;
+    const scale = Math.min(1, maxEdge / Math.max(w, h));
+    w = Math.max(2, Math.round((w * scale) / 2) * 2);
+    h = Math.max(2, Math.round((h * scale) / 2) * 2);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx || typeof canvas.captureStream !== "function") return file;
+    const stream = canvas.captureStream(12);
+    const candidates = [
+      "video/mp4",
+      "video/webm;codecs=vp8",
+      "video/webm",
+    ];
+    const mime = candidates.find((t) => {
+      try {
+        return MediaRecorder.isTypeSupported(t);
+      } catch {
+        return false;
+      }
+    });
+    if (!mime) return file;
+    const recorder = new MediaRecorder(stream, {
+      mimeType: mime,
+      videoBitsPerSecond: 700_000,
+    });
+    const chunks = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size) chunks.push(e.data);
+    };
+    const stopped = new Promise((resolve) => {
+      recorder.addEventListener("stop", () => resolve(), { once: true });
+    });
+    video.currentTime = 0;
+    recorder.start(200);
+    await video.play();
+    let raf = 0;
+    const draw = () => {
+      if (video.ended || video.paused) return;
+      ctx.drawImage(video, 0, 0, w, h);
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, Math.min(12000, (Number(video.duration) || 5) * 1000 + 500));
+      video.addEventListener(
+        "ended",
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        { once: true }
+      );
+    });
+    cancelAnimationFrame(raf);
+    if (recorder.state !== "inactive") recorder.stop();
+    await stopped;
+    stream.getTracks().forEach((t) => t.stop());
+    const blob = new Blob(chunks, { type: mime });
+    if (blob.size < 1000 || blob.size > maxBytes) return file;
+    const ext = mime.includes("mp4") ? "mp4" : "webm";
+    return new File([blob], `motion-compressed.${ext}`, {
+      type: mime.includes("mp4") ? "video/mp4" : "video/webm",
+    });
+  } catch (err) {
+    console.warn("compressMotionForUpload", err);
+    return file;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function addCustomTemplate(file) {
+  if (!file) return;
+  if (!looksLikeVideo(file)) {
+    setTemplateStatus("Choose a video clip (MP4 or MOV).", { alertUser: true });
     return;
   }
-  if (file.size > MAX_CUSTOM_MOTION_BYTES) {
-    els.status.textContent = `That clip is too large (max ${Math.round(MAX_CUSTOM_MOTION_BYTES / 1024 / 1024)} MB). Trim it to about 3–5 seconds.`;
+  if (file.size > MAX_GALLERY_MOTION_BYTES) {
+    setTemplateStatus(
+      `That clip is ${mb(file.size)} MB (max ${Math.round(MAX_GALLERY_MOTION_BYTES / 1024 / 1024)} MB). Trim it to about 3–5 seconds and try again.`,
+      { alertUser: true }
+    );
     return;
   }
+  els.status.textContent = `Adding ${slugTitle(file.name)} (${mb(file.size)} MB)…`;
   const id = `custom-${Date.now().toString(36)}`;
   const blobUrl = URL.createObjectURL(file);
   const duration = await probeDuration(file, blobUrl);
   const entry = {
     id,
-    title: slugTitle(file.name),
-    description: "Your clip — available in this browser session.",
+    title: slugTitle(file.name) || "My clip",
+    description: `Your clip (${mb(file.size)} MB) — available in this browser session.`,
     video_path: "",
     blob_url: blobUrl,
     duration_s: duration ?? 4,
@@ -179,7 +319,11 @@ async function addCustomTemplate(file) {
   customMotionFiles.set(id, file);
   customTemplates = [entry, ...customTemplates];
   const list = mergedTemplates();
-  renderRail(list, `${list.length} motions · your clip is ready`);
+  const note =
+    file.size > MAX_UPLOAD_MOTION_BYTES
+      ? `${list.length} motions · yours is ready (will compress on Generate)`
+      : `${list.length} motions · your clip is ready`;
+  renderRail(list, note);
   selectTemplate(id);
 }
 
@@ -398,10 +542,20 @@ els.uploadZone.addEventListener("drop", (e) => {
 });
 
 els.refresh.addEventListener("click", () => loadCatalog());
-els.addTemplate?.addEventListener("click", () => els.templateInput?.click());
 els.templateInput?.addEventListener("change", () => {
   const f = els.templateInput.files && els.templateInput.files[0];
   els.templateInput.value = "";
+  if (f) void addCustomTemplate(f);
+});
+els.addTemplateZone?.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  els.addTemplateZone.classList.add("drag");
+});
+els.addTemplateZone?.addEventListener("dragleave", () => els.addTemplateZone.classList.remove("drag"));
+els.addTemplateZone?.addEventListener("drop", (e) => {
+  e.preventDefault();
+  els.addTemplateZone.classList.remove("drag");
+  const f = e.dataTransfer?.files && e.dataTransfer.files[0];
   if (f) void addCustomTemplate(f);
 });
 window.addEventListener("scroll", syncPlayback, { passive: true });
@@ -665,13 +819,25 @@ async function callSpace(apiName, payload) {
 els.btnGen.addEventListener("click", async () => {
   if (!selectedId || !photoFile) return;
   const selected = mergedTemplates().find((t) => t.id === selectedId);
-  const motion = selected?.custom ? customMotionFiles.get(selectedId) : null;
+  let motion = selected?.custom ? customMotionFiles.get(selectedId) : null;
   if (selected?.custom && !motion) {
     els.genStatus.textContent = "That custom clip is missing. Add the template again.";
     return;
   }
   setBusy(`Queuing on Runpod… ${GENERATE_WAIT}`);
   try {
+    if (motion && motion.size > MAX_UPLOAD_MOTION_BYTES) {
+      setBusy(`Compressing your ${mb(motion.size)} MB clip for upload…`);
+      const compressed = await compressMotionForUpload(motion, MAX_UPLOAD_MOTION_BYTES);
+      if (compressed.size > MAX_UPLOAD_MOTION_BYTES) {
+        throw new Error(
+          `Your motion clip is ${mb(motion.size)} MB after pick. Trim it to about 3–5 seconds (under ${mb(MAX_UPLOAD_MOTION_BYTES)} MB) in Photos, then Add template again.`
+        );
+      }
+      motion = compressed;
+      customMotionFiles.set(selectedId, compressed);
+      setBusy(`Queuing on Runpod… ${GENERATE_WAIT}`);
+    }
     const size = await templateSize(selected);
     const args = generateArgs(size);
     if (USE_PROXY) {
