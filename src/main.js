@@ -670,3 +670,28 @@ els.btnStop?.addEventListener("click", async () => {
 refreshBalance();
 setInterval(refreshBalance, 30000);
 loadCatalog();
+
+const FACE_SWAP_EXTEND = "https://simzy-face-swap-extend-video.hf.space/?embed=true";
+
+function showTab(name) {
+  const tabName = name === "faceswap" || name === "extend" ? name : "motions";
+  document.querySelectorAll("[data-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.panel !== tabName;
+  });
+  document.querySelectorAll("[data-tab]").forEach((tab) => {
+    const on = tab.dataset.tab === tabName;
+    tab.classList.toggle("is-on", on);
+    tab.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  const panel = document.querySelector(`[data-panel="${tabName}"]`);
+  const frame = panel?.querySelector("iframe");
+  if (frame && !frame.getAttribute("src")) frame.src = frame.dataset.src || FACE_SWAP_EXTEND;
+  if (tabName === "motions") syncPlayback();
+  const next = `#${tabName}`;
+  if (location.hash !== next) history.replaceState(null, "", next);
+}
+
+document.querySelectorAll("[data-tab]").forEach((tab) => {
+  tab.addEventListener("click", () => showTab(tab.dataset.tab));
+});
+showTab(location.hash.replace("#", ""));

@@ -16,8 +16,14 @@
         <button type="button" id="btn-howto" class="howto-launch" aria-haspopup="dialog" aria-controls="howto-dialog">
           How to use &amp; create templates
         </button>
+        <nav class="tabs" role="tablist" aria-label="App sections">
+          <button type="button" class="tab is-on" data-tab="motions" role="tab" aria-selected="true">Motions</button>
+          <button type="button" class="tab" data-tab="faceswap" role="tab" aria-selected="false">Face Swap</button>
+          <button type="button" class="tab" data-tab="extend" role="tab" aria-selected="false">Extend</button>
+        </nav>
       </header>
 
+      <div id="panel-motions" data-panel="motions">
       <section class="section" aria-labelledby="motions-heading">
         <div class="section-head">
           <h2 id="motions-heading">Motions</h2>
@@ -97,6 +103,19 @@
       <footer class="foot muted">
         Powered by Wan Animate on Runpod · real ~4s motion templates
       </footer>
+      </div>
+
+      <section class="section" id="panel-faceswap" data-panel="faceswap" hidden>
+        <h2>Face Swap</h2>
+        <p class="muted">Left face replaces the person on the left. Right face replaces the person on the right. The middle upload is the scene, or use a short video clip. Unlock the Space first.</p>
+        <iframe class="space-frame" title="Face Swap" data-src="https://simzy-face-swap-extend-video.hf.space/?embed=true" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>
+      </section>
+
+      <section class="section" id="panel-extend" data-panel="extend" hidden>
+        <h2>Extend</h2>
+        <p class="muted">Extend a still or a swapped picture into a longer clip in the same Space. Choose Extend, or run both steps.</p>
+        <iframe class="space-frame" title="Extend" data-src="https://simzy-face-swap-extend-video.hf.space/?embed=true" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>
+      </section>
     </div>
 
     <dialog id="howto-dialog" class="howto" aria-labelledby="howto-title">

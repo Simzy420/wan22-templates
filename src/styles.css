@@ -44,6 +44,33 @@ body {
 }
 .sub { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.95rem; }
 
+.tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.9rem;
+}
+.tab {
+  flex: 1;
+  min-height: 44px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-weight: 700;
+}
+.tab.is-on {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  color: #140816;
+  border-color: transparent;
+}
+.space-frame {
+  width: 100%;
+  height: min(78vh, 860px);
+  border: 0;
+  border-radius: var(--radius);
+  background: #000;
+}
+
 .howto-launch {
   width: 100%;
   margin-top: 0.9rem;
