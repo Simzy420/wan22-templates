@@ -25,6 +25,8 @@ let templates = [];
 let selectedId = null;
 let photoFile = null;
 let photoBlobUrl = null;
+let secondFaceFile = null;
+let secondFaceBlobUrl = null;
 let lastResultUrl = null;
 /** Session id returned by Space /generate for /extend API calls. */
 let sessionId = "";
@@ -62,6 +64,12 @@ const els = {
   howtoBtn: document.getElementById("btn-howto"),
   howtoDialog: document.getElementById("howto-dialog"),
   howtoClose: document.getElementById("btn-howto-close"),
+  secondFaceSection: document.getElementById("second-face-section"),
+  secondFaceInput: document.getElementById("second-face-input"),
+  secondFaceZone: document.getElementById("second-face-zone"),
+  secondFaceInner: document.getElementById("second-face-inner"),
+  secondFacePreview: document.getElementById("second-face-preview"),
+  negativePrompt: document.getElementById("negative-prompt"),
 };
 
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -269,6 +277,39 @@ function selectTemplate(id, opts = {}) {
   els.selectedPanel.hidden = false;
   els.selectedTitle.textContent = t.title || t.id;
   els.selectedDesc.textContent = t.description || "";
+
+  // Autofill prompt from template
+  if (t.prompt) {
+    els.prompt.value = t.prompt;
+  } else {
+    els.prompt.value = "a person, natural motion, cinematic, high quality";
+  }
+
+  // Autofill negative prompt from template
+  if (t.negative_prompt) {
+    els.negativePrompt.value = t.negative_prompt;
+  } else {
+    els.negativePrompt.value = "blurry, low quality, distorted face, deformed, bad anatomy, extra limbs, watermark, text, censored";
+  }
+
+  // Show/hide second face upload based on face_count
+  const needsSecondFace = t.face_count === 2;
+  if (els.secondFaceSection) {
+    els.secondFaceSection.hidden = !needsSecondFace;
+  }
+  if (!needsSecondFace) {
+    secondFaceFile = null;
+    if (secondFaceBlobUrl) {
+      URL.revokeObjectURL(secondFaceBlobUrl);
+      secondFaceBlobUrl = null;
+    }
+    if (els.secondFacePreview) {
+      els.secondFacePreview.hidden = true;
+      els.secondFacePreview.src = "";
+    }
+    if (els.secondFaceInner) els.secondFaceInner.hidden = false;
+  }
+
   syncPlayback();
   updateGenerateEnabled();
   if (scrollUpload) focusUpload();
@@ -305,6 +346,41 @@ els.uploadZone.addEventListener("drop", (e) => {
 });
 
 els.refresh.addEventListener("click", () => loadCatalog());
+
+// Second face upload handler
+if (els.secondFaceInput) {
+  els.secondFaceInput.addEventListener("change", () => {
+    const f = els.secondFaceInput.files && els.secondFaceInput.files[0];
+    if (!f || !f.type.startsWith("image/")) return;
+    secondFaceFile = f;
+    if (secondFaceBlobUrl) URL.revokeObjectURL(secondFaceBlobUrl);
+    secondFaceBlobUrl = URL.createObjectURL(f);
+    els.secondFacePreview.src = secondFaceBlobUrl;
+    els.secondFacePreview.hidden = false;
+    els.secondFaceInner.hidden = true;
+  });
+}
+if (els.secondFaceZone) {
+  els.secondFaceZone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    els.secondFaceZone.classList.add("drag");
+  });
+  els.secondFaceZone.addEventListener("dragleave", () => els.secondFaceZone.classList.remove("drag"));
+  els.secondFaceZone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    els.secondFaceZone.classList.remove("drag");
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f && f.type.startsWith("image/")) {
+      secondFaceFile = f;
+      if (secondFaceBlobUrl) URL.revokeObjectURL(secondFaceBlobUrl);
+      secondFaceBlobUrl = URL.createObjectURL(f);
+      els.secondFacePreview.src = secondFaceBlobUrl;
+      els.secondFacePreview.hidden = false;
+      els.secondFaceInner.hidden = true;
+    }
+  });
+}
+
 window.addEventListener("scroll", syncPlayback, { passive: true });
 window.addEventListener("resize", syncPlayback);
 els.rail.addEventListener("scroll", syncPlayback, { passive: true });
@@ -460,7 +536,7 @@ function generateArgs(size) {
     steps: 6,
     guidance: 1,
     sample_shift: 5,
-    negative: "",
+    negative: els.negativePrompt ? els.negativePrompt.value.trim() : "",
     seed: 42,
     session_id: sessionId || "",
   };
@@ -471,7 +547,7 @@ function extendArgs(auto) {
     prompt: els.prompt.value,
     seg_duration: 3.5,
     steps: 4,
-    negative: "",
+    negative: els.negativePrompt ? els.negativePrompt.value.trim() : "",
     seed: 42,
     randomize: true,
     quality: 6,
@@ -532,6 +608,10 @@ async function callSpace(apiName, payload) {
     const photo = await photoForUpload(payload.photo, payload.target);
     form.append("photo", photo, photo.name || "photo.jpg");
   }
+  if (payload.secondFace) {
+    const photo2 = await photoForUpload(payload.secondFace, payload.target);
+    form.append("second_face", photo2, photo2.name || "second_face.jpg");
+  }
   const res = await fetch("/api/generate", { method: "POST", body: form });
   const text = await res.text();
   let data = null;
@@ -564,7 +644,7 @@ els.btnGen.addEventListener("click", async () => {
     const size = await templateSize(templates.find((t) => t.id === selectedId));
     const args = generateArgs(size);
     if (USE_PROXY) {
-      const data = await callSpace("/generate", { json: args, photo: photoFile, target: workerSize(size) });
+      const data = await callSpace("/generate", { json: args, photo: photoFile, secondFace: secondFaceFile, target: workerSize(size) });
       rememberSession(data);
       showResult(data.video || data.url);
       els.genStatus.textContent = statusText(data.status, "Done.");

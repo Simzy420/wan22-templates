@@ -59,9 +59,28 @@
         </label>
       </section>
 
+      <section class="section" id="second-face-section" hidden>
+        <h2>Second face <span class="muted">(for 2-person templates)</span></h2>
+        <p class="muted">This template has 2 people. Upload a still for the second face.</p>
+        <label class="upload-zone" id="second-face-zone">
+          <input type="file" id="second-face-input" accept="image/*" hidden />
+          <div class="upload-inner" id="second-face-inner">
+            <div class="upload-icon" aria-hidden="true">⬆</div>
+            <strong>Tap to upload the second face</strong>
+            <span class="muted">JPG / PNG · face photo works best</span>
+          </div>
+          <img id="second-face-preview" alt="" hidden />
+        </label>
+      </section>
+
       <section class="section">
-        <h2>Prompt <span class="muted">(optional)</span></h2>
-        <textarea id="prompt" rows="2" placeholder="a person, natural motion, cinematic…">a person, natural motion, cinematic, high quality</textarea>
+        <h2>Prompt <span class="muted">(auto-filled, edit if needed)</span></h2>
+        <textarea id="prompt" rows="3" placeholder="a person, natural motion, cinematic…">a person, natural motion, cinematic, high quality</textarea>
+      </section>
+
+      <section class="section">
+        <h2>Negative prompt <span class="muted">(auto-filled)</span></h2>
+        <textarea id="negative-prompt" rows="2" placeholder="blurry, low quality, distorted…">blurry, low quality, distorted face, deformed, bad anatomy, extra limbs, watermark, text, censored</textarea>
       </section>
 
       <section class="section actions">
