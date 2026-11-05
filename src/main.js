@@ -70,6 +70,7 @@ const els = {
   secondFaceInner: document.getElementById("second-face-inner"),
   secondFacePreview: document.getElementById("second-face-preview"),
   negativePrompt: document.getElementById("negative-prompt"),
+  extendNegativePrompt: document.getElementById("extend-negative-prompt"),
 };
 
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -291,6 +292,14 @@ function selectTemplate(id, opts = {}) {
   } else {
     els.negativePrompt.value = "blurry, low quality, distorted face, deformed, bad anatomy, extra limbs, watermark, text, censored";
   }
+  // Autofill extend negative prompt from template
+  if (els.extendNegativePrompt) {
+    if (t.negative_prompt) {
+      els.extendNegativePrompt.value = t.negative_prompt;
+    } else {
+      els.extendNegativePrompt.value = "blurry, low quality, distorted face, deformed, bad anatomy, extra limbs, watermark, text, censored";
+    }
+  }
 
   // Show/hide second face upload based on face_count
   const needsSecondFace = t.face_count === 2;
@@ -426,6 +435,7 @@ function showResult(fileOrUrl) {
   url = rewriteSpaceVideoUrl(url, SPACE);
   lastResultUrl = url;
   els.resultPanel.hidden = false;
+  els.resultVideo.loop = true;
   els.resultVideo.src = lastResultUrl;
   els.resultVideo.play().catch(() => {});
   els.btnDownload.href = lastResultUrl;
@@ -547,7 +557,7 @@ function extendArgs(auto) {
     prompt: els.prompt.value,
     seg_duration: 3.5,
     steps: 4,
-    negative: els.negativePrompt ? els.negativePrompt.value.trim() : "",
+    negative: els.extendNegativePrompt ? els.extendNegativePrompt.value.trim() : "",
     seed: 42,
     randomize: true,
     quality: 6,
