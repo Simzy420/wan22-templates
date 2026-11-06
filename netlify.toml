@@ -18,6 +18,27 @@
   to = "/index.html"
   status = 200
 
+# Phones keep an old tab open. Revalidate the shell so a new deploy is picked up.
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/config.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
 [dev]
   command = "npm run dev"
   targetPort = 5173

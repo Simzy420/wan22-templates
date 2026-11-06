@@ -1,6 +1,7 @@
 /**
  * Vercel: GET /api/job?id=<runpod job id>
- * Polls https://api.runpod.ai/v2/<endpoint>/status/<id> with RUNPOD_API_KEY.
+ * Polls /status with the API key for the account encoded on the job id
+ * (`a1_` / `a2_` when both Runpod accounts are configured).
  */
 import { handleRunpodJobRequest } from "../server/runpodRoutes.js";
 

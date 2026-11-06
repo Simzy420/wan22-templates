@@ -8,4 +8,6 @@ window.CONFIG = {
   // Phone Safari blocks direct @gradio/client calls to the Space ("Load failed").
   // true posts Generate / Extend / Auto-extend to same-origin /api/generate.
   USE_PROXY: true,
+  // Bump when the phone UI changes so a cached tab reloads config.js.
+  ASSET_VERSION: "20261106-dual-runpod",
 };

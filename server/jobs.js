@@ -302,11 +302,15 @@ export async function runBackgroundJob(spec, deps = {}) {
           connect: deps.connect,
           timeoutMs: deps.timeoutMs ?? 14 * 60 * 1000,
         });
+    const previous = await store.getJSON(spec.job_id);
     const record = { id: spec.job_id, phase: "done", result };
+    if (previous?.runpod_job_id) record.runpod_job_id = previous.runpod_job_id;
     await store.setJSON(spec.job_id, record);
     return publicJob(record);
   } catch (error) {
+    const previous = await store.getJSON(spec.job_id);
     const record = { id: spec.job_id, phase: "error", error: errorText(error, env, spec.api) };
+    if (previous?.runpod_job_id) record.runpod_job_id = previous.runpod_job_id;
     await store.setJSON(spec.job_id, record);
     return publicJob(record);
   }

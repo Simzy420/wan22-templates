@@ -6,6 +6,11 @@
  * The handler accepts image_base64 plus a public video_url, and returns
  * a base64 mp4 on output.video (Comfy gifs encoded as base64).
  * The API key stays in this process. Callers never send it to the phone.
+ *
+ * When RUNPOD_API_KEY_2 and RUNPOD_ENDPOINT_ID_2 are both set, /run goes to
+ * the account with the higher clientBalance. The job id is then prefixed
+ * a1_ or a2_ so later /status and cancel calls use that same account.
+ * With only account 1 configured, the job id is unchanged.
  */
 
 export const TEMPLATE_CATALOG_URL =
@@ -45,14 +50,11 @@ export function runpodEndpointId(env = {}) {
   return "";
 }
 
-export function runpodConfigured(env = {}) {
-  return Boolean(String(env.RUNPOD_API_KEY || "").trim() && runpodEndpointId(env));
-}
-
-export function runpodEndpoint(env = {}) {
-  const id = runpodEndpointId(env);
-  const fallback = id ? `https://api.runpod.ai/v2/${id}` : "";
-  const raw = String(env.RUNPOD_ENDPOINT_URL || "").trim();
+/** Official /run base. A URL is used only when it is https://api.runpod.ai; otherwise the endpoint id is used. */
+export function runpodEndpointFrom(id, rawUrl) {
+  const endpointId = String(id || "").trim();
+  const fallback = endpointId ? `https://api.runpod.ai/v2/${endpointId}` : "";
+  const raw = String(rawUrl || "").trim();
   if (!raw) return fallback;
   try {
     const parsed = new URL(raw);
@@ -65,6 +67,79 @@ export function runpodEndpoint(env = {}) {
   } catch {
     return fallback;
   }
+}
+
+export function runpodEndpoint(env = {}) {
+  return runpodEndpointFrom(runpodEndpointId(env), env.RUNPOD_ENDPOINT_URL);
+}
+
+/**
+ * Account 1 is RUNPOD_API_KEY + its own endpoint.
+ * Account 2 is optional: both RUNPOD_API_KEY_2 and RUNPOD_ENDPOINT_ID_2 must be set.
+ * A key is never paired with the other account's endpoint.
+ */
+export function runpodAccounts(env = {}) {
+  const accounts = [];
+  const key1 = String(env.RUNPOD_API_KEY || "").trim();
+  const id1 = runpodEndpointId(env);
+  if (key1 && id1) {
+    accounts.push({
+      index: 1,
+      label: "Runpod 1",
+      apiKey: key1,
+      endpointId: id1,
+      endpoint: runpodEndpointFrom(id1, env.RUNPOD_ENDPOINT_URL),
+    });
+  }
+  const key2 = String(env.RUNPOD_API_KEY_2 || "").trim();
+  const id2 = String(env.RUNPOD_ENDPOINT_ID_2 || "").trim();
+  if (key2 && id2) {
+    accounts.push({
+      index: 2,
+      label: "Runpod 2",
+      apiKey: key2,
+      endpointId: id2,
+      endpoint: runpodEndpointFrom(id2, env.RUNPOD_ENDPOINT_URL_2),
+    });
+  }
+  return accounts;
+}
+
+export function runpodConfigured(env = {}) {
+  return runpodAccounts(env).length > 0;
+}
+
+/** Public job ids are `a1_<runpod id>` or `a2_<runpod id>` when both accounts are configured. */
+export function splitAccountJobId(jobId) {
+  const value = String(jobId || "");
+  const match = /^a([12])_(.+)$/.exec(value);
+  if (!match) return { index: 1, id: value, tagged: false };
+  return { index: Number(match[1]), id: match[2], tagged: true };
+}
+
+export function tagAccountJobId(index, jobId) {
+  return `a${index}_${jobId}`;
+}
+
+export function accountForJob(env, jobId) {
+  const accounts = runpodAccounts(env);
+  if (!accounts.length) {
+    throw new Error("Generate uses Runpod, but RUNPOD_API_KEY or RUNPOD_ENDPOINT_ID is missing.");
+  }
+  const split = splitAccountJobId(jobId);
+  if (!isRawJobId(split.id)) {
+    const error = new Error("Missing job id");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!split.tagged) return { account: accounts[0], id: split.id };
+  const account = accounts.find((item) => item.index === split.index);
+  if (!account) {
+    const error = new Error(`That job is on Runpod ${split.index}, but that account is not configured on this site.`);
+    error.statusCode = 409;
+    throw error;
+  }
+  return { account, id: split.id };
 }
 
 export function resultVideoKey(jobId) {
@@ -264,8 +339,18 @@ function isTerminalFailure(status) {
   return name === "FAILED" || name === "CANCELLED" || name === "TIMED_OUT" || name === "ERROR";
 }
 
-export function isJobId(value) {
+function isRawJobId(value) {
   return /^[A-Za-z0-9_-]{6,80}$/.test(String(value || ""));
+}
+
+export function isJobId(value) {
+  return isRawJobId(splitAccountJobId(value).id);
+}
+
+export function isCreditFailure(error) {
+  if (!error) return false;
+  if (error.credit === true || error.statusCode === 402) return true;
+  return CREDIT_RE.test(String(error.message || ""));
 }
 
 function statusError(message, statusCode) {
@@ -372,54 +457,93 @@ async function runpodRequest(url, { apiKey, fetchImpl, method = "GET", body, tim
     json = null;
   }
   if (!response.ok) {
+    const raw = `${response.status} ${pickMessage(json, text)}`;
     const error = new Error(explainRunpodFailure({ httpStatus: response.status, json, text }));
     error.statusCode = response.status;
+    error.credit = response.status === 402 || CREDIT_RE.test(raw);
     throw error;
   }
   return { response, text, json };
 }
 
-function requireRunpod(env) {
-  const endpoint = runpodEndpoint(env);
-  const apiKey = String(env.RUNPOD_API_KEY || "").trim();
-  if (!endpoint || !apiKey) {
-    throw new Error("Generate uses Runpod, but RUNPOD_API_KEY or RUNPOD_ENDPOINT_ID is missing.");
-  }
-  return { endpoint, apiKey };
+function creditError(message, { credit = false } = {}) {
+  const error = new Error(message);
+  if (credit) error.credit = true;
+  return error;
 }
 
-export async function startRunpodJob(env, input, deps = {}) {
-  const { endpoint, apiKey } = requireRunpod(env);
+async function rankAccounts(accounts, deps) {
+  const { queryClientBalance } = await import("./runpodAdmin.js");
+  const scored = await Promise.all(
+    accounts.map(async (account) => {
+      try {
+        const row = await queryClientBalance(account, deps);
+        return { account, balance: typeof row.balance === "number" ? row.balance : null };
+      } catch {
+        return { account, balance: null };
+      }
+    })
+  );
+  scored.sort((a, b) => {
+    const an = a.balance == null ? Number.NEGATIVE_INFINITY : a.balance;
+    const bn = b.balance == null ? Number.NEGATIVE_INFINITY : b.balance;
+    if (bn !== an) return bn - an;
+    return a.account.index - b.account.index;
+  });
+  return scored.map((item) => item.account);
+}
+
+async function postRun(account, input, deps, tag) {
   const fetchImpl = deps.fetch || fetch;
   const timeoutMs = Math.min(30000, deps.timeoutMs ?? 30000);
-  const submitted = await runpodRequest(`${endpoint}/run`, {
-    apiKey,
+  const submitted = await runpodRequest(`${account.endpoint}/run`, {
+    apiKey: account.apiKey,
     fetchImpl,
     method: "POST",
     body: { input },
     timeoutMs,
   });
   const first = submitted.json || {};
+  const rawBlob = `${first.status || ""} ${pickMessage(first, submitted.text)}`;
   if (isTerminalFailure(first.status)) {
-    throw new Error(explainRunpodFailure({ httpStatus: submitted.response.status, json: first, text: submitted.text }));
+    throw creditError(explainRunpodFailure({ httpStatus: submitted.response.status, json: first, text: submitted.text }), {
+      credit: CREDIT_RE.test(rawBlob),
+    });
   }
-  if (!isJobId(first.id)) {
-    throw new Error(
+  if (!isRawJobId(first.id)) {
+    throw creditError(
       explainRunpodFailure({
         httpStatus: submitted.response.status,
         json: first,
         text: submitted.text || "Runpod did not return a job id.",
-      })
+      }),
+      { credit: CREDIT_RE.test(`${submitted.text || ""} ${rawBlob}`) }
     );
   }
-  return first;
+  return { ...first, id: tag ? tagAccountJobId(account.index, first.id) : first.id };
+}
+
+export async function startRunpodJob(env, input, deps = {}) {
+  const accounts = runpodAccounts(env);
+  if (!accounts.length) {
+    throw new Error("Generate uses Runpod, but RUNPOD_API_KEY or RUNPOD_ENDPOINT_ID is missing.");
+  }
+  // One account: do not look up a balance and do not prefix the job id.
+  if (accounts.length === 1) return postRun(accounts[0], input, deps, false);
+  const ranked = await rankAccounts(accounts, deps);
+  try {
+    return await postRun(ranked[0], input, deps, true);
+  } catch (error) {
+    if (!isCreditFailure(error) || ranked.length < 2) throw error;
+    return postRun(ranked[1], input, deps, true);
+  }
 }
 
 export async function fetchRunpodJob(env, jobId, deps = {}) {
-  const { endpoint, apiKey } = requireRunpod(env);
+  const { account, id } = accountForJob(env, jobId);
   const fetchImpl = deps.fetch || fetch;
-  const polled = await runpodRequest(`${endpoint}/status/${encodeURIComponent(jobId)}`, {
-    apiKey,
+  const polled = await runpodRequest(`${account.endpoint}/status/${encodeURIComponent(id)}`, {
+    apiKey: account.apiKey,
     fetchImpl,
     timeoutMs: deps.timeoutMs ?? 30000,
   });
@@ -432,6 +556,7 @@ export async function submitAndWait(env, input, deps = {}) {
   const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const started = Date.now();
   const first = await startRunpodJob(env, input, { ...deps, timeoutMs });
+  if (typeof deps.onStarted === "function") await deps.onStarted(first);
   if (String(first.status || "").toUpperCase() === "COMPLETED") return first;
 
   while (Date.now() - started < timeoutMs) {
@@ -490,7 +615,19 @@ export async function runRunpodGenerate(spec, deps = {}) {
   const fetchImpl = deps.fetch || fetch;
   const video_url = spec.video_url || (await resolveMotionVideoUrl(spec.payload || {}, { fetch: fetchImpl }));
   const input = buildRunpodInput({ ...(spec.payload || {}), video_url, image_base64: spec.image_base64 });
-  const completed = await submitAndWait(env, input, deps);
+  const completed = await submitAndWait(env, input, {
+    ...deps,
+    onStarted: async (started) => {
+      if (deps.store && spec.job_id && started?.id) {
+        await deps.store.setJSON(spec.job_id, {
+          id: spec.job_id,
+          phase: "running",
+          runpod_job_id: started.id,
+        });
+      }
+      if (typeof deps.onStarted === "function") await deps.onStarted(started);
+    },
+  });
   const encoded = extractRunpodVideoBase64(completed?.output ?? completed);
   const bytes = decodeVideoBase64(encoded);
   if (!bytes) {
