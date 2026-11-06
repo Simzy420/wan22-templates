@@ -46,17 +46,19 @@ body {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.4rem;
   margin-top: 0.9rem;
 }
 .tab {
-  flex: 1;
+  flex: 1 1 calc(50% - 0.2rem);
   min-height: 44px;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text);
   font-weight: 700;
+  font-size: 0.92rem;
 }
 .tab.is-on {
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
@@ -69,6 +71,42 @@ body {
   border: 0;
   border-radius: var(--radius);
   background: #000;
+}
+.space-frame-tall {
+  height: min(84vh, 980px);
+}
+.space-open-row {
+  margin: 0 0 0.75rem;
+}
+.space-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0.55rem 1rem;
+  text-decoration: none;
+}
+
+.gen-progress {
+  margin: 0.85rem 0 0.35rem;
+}
+.gen-progress-track {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.gen-progress-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 0.45s ease;
+}
+.gen-progress-label {
+  margin: 0.45rem 0 0;
+  font-size: 0.85rem;
 }
 
 .howto-launch {

@@ -51,6 +51,9 @@ const els = {
   prompt: document.getElementById("prompt"),
   btnGen: document.getElementById("btn-generate"),
   genStatus: document.getElementById("gen-status"),
+  genProgress: document.getElementById("gen-progress"),
+  genProgressBar: document.getElementById("gen-progress-bar"),
+  genProgressLabel: document.getElementById("gen-progress-label"),
   resultPanel: document.getElementById("result-panel"),
   resultVideo: document.getElementById("result-video"),
   btnDownload: document.getElementById("btn-download"),
@@ -73,6 +76,13 @@ const els = {
   negativePrompt: document.getElementById("negative-prompt"),
   extendNegativePrompt: document.getElementById("extend-negative-prompt"),
 };
+
+/** Object URLs created for /api/result playback; revoked on the next result. */
+let resultObjectUrl = "";
+let progressTimer = null;
+let progressValue = 0;
+/** True when the latest clip came from Runpod Generate (cannot Extend on the Space). */
+let lastResultFromRunpod = false;
 
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 let playObserver = null;
@@ -413,11 +423,57 @@ els.extendTarget.addEventListener("input", () => {
   els.extendTargetVal.textContent = `${els.extendTarget.value}s`;
 });
 
+function setProgress(pct, label) {
+  if (!els.genProgress || !els.genProgressBar) return;
+  progressValue = Math.max(0, Math.min(1, Number(pct) || 0));
+  els.genProgress.hidden = false;
+  els.genProgressBar.style.width = `${Math.round(progressValue * 100)}%`;
+  if (els.genProgressLabel) els.genProgressLabel.textContent = label || "";
+}
+
+function stopProgressPump() {
+  if (progressTimer) {
+    clearInterval(progressTimer);
+    progressTimer = null;
+  }
+}
+
+/**
+ * Swapr-mix style progress: keep moving during the wait, but never paint 1.0
+ * until the result is actually ready (Gradio hang lesson from face-swap).
+ */
+function startProgressPump(label) {
+  stopProgressPump();
+  setProgress(0.06, label || "Starting…");
+  const started = Date.now();
+  progressTimer = setInterval(() => {
+    const elapsed = (Date.now() - started) / 1000;
+    // Asymptote toward ~0.9 over ~8 minutes so long Runpod cold starts still move.
+    const pumped = 0.08 + 0.82 * (1 - Math.exp(-elapsed / 180));
+    if (pumped > progressValue) setProgress(Math.min(0.9, pumped), label);
+  }, 900);
+}
+
+function finishProgress(label) {
+  stopProgressPump();
+  setProgress(1, label || "Done.");
+}
+
+function hideProgress() {
+  stopProgressPump();
+  progressValue = 0;
+  if (!els.genProgress) return;
+  els.genProgress.hidden = true;
+  if (els.genProgressBar) els.genProgressBar.style.width = "0%";
+  if (els.genProgressLabel) els.genProgressLabel.textContent = "";
+}
+
 function setBusy(msg) {
   els.genStatus.textContent = msg || "";
   els.btnGen.disabled = true;
   els.btnExtend.disabled = true;
   els.btnAuto.disabled = true;
+  startProgressPump(msg || "Working…");
 }
 
 function clearBusy() {
@@ -426,7 +482,54 @@ function clearBusy() {
   els.btnAuto.disabled = false;
 }
 
-function showResult(fileOrUrl) {
+function revokeResultObjectUrl() {
+  if (resultObjectUrl) {
+    URL.revokeObjectURL(resultObjectUrl);
+    resultObjectUrl = "";
+  }
+}
+
+/** Pull /api/result via Range chunks so large mp4s survive Vercel's ~4.5MB cap. */
+async function fetchResultBlob(url, onProgress) {
+  const chunk = 3_500_000;
+  let start = 0;
+  let total = null;
+  const parts = [];
+  while (total == null || start < total) {
+    const end = total == null ? start + chunk - 1 : Math.min(total - 1, start + chunk - 1);
+    const res = await fetch(url, { headers: { Range: `bytes=${start}-${end}` }, cache: "no-store" });
+    if (res.status === 200 && start === 0) {
+      const blob = await res.blob();
+      if (typeof onProgress === "function") onProgress(1);
+      return blob;
+    }
+    if (res.status !== 206 && res.status !== 200) {
+      const text = await res.text().catch(() => "");
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = null;
+      }
+      throw new Error(publicErrorText((data && data.error) || text || `Result HTTP ${res.status}`));
+    }
+    const range = res.headers.get("content-range") || "";
+    const match = /bytes\s+(\d+)-(\d+)\/(\d+|\*)/i.exec(range);
+    if (match && match[3] !== "*") total = Number(match[3]);
+    const piece = await res.arrayBuffer();
+    parts.push(piece);
+    start += piece.byteLength;
+    if (!piece.byteLength) break;
+    if (total != null && typeof onProgress === "function") onProgress(Math.min(0.99, start / total));
+    if (total == null && piece.byteLength < chunk) break;
+    if (total != null && start >= total) break;
+  }
+  if (!parts.length) throw new Error("Result video was empty.");
+  if (typeof onProgress === "function") onProgress(1);
+  return new Blob(parts, { type: "video/mp4" });
+}
+
+async function showResult(fileOrUrl) {
   let url = fileOrUrl;
   if (fileOrUrl && typeof fileOrUrl === "object") {
     const nested = fileOrUrl.video && typeof fileOrUrl.video === "object" ? fileOrUrl.video : null;
@@ -434,13 +537,27 @@ function showResult(fileOrUrl) {
   }
   if (!url || typeof url !== "string") throw new Error("No video returned");
   url = rewriteSpaceVideoUrl(url, SPACE);
+  revokeResultObjectUrl();
+  lastResultBlob = null;
+  lastResultFromRunpod = url.startsWith("/api/result");
   lastResultUrl = url;
+
+  if (lastResultFromRunpod) {
+    setProgress(Math.max(progressValue, 0.92), "Downloading result video…");
+    const blob = await fetchResultBlob(url, (pct) => {
+      setProgress(0.92 + 0.07 * pct, "Downloading result video…");
+    });
+    if (!blob.size) throw new Error("Result video was empty.");
+    lastResultBlob = blob;
+    resultObjectUrl = URL.createObjectURL(blob);
+    lastResultUrl = resultObjectUrl;
+  }
+
   els.resultPanel.hidden = false;
   els.resultVideo.loop = true;
   els.resultVideo.src = lastResultUrl;
   els.resultVideo.play().catch(() => {});
   els.btnDownload.href = lastResultUrl;
-  lastResultBlob = null;
 }
 
 async function resultFile() {
@@ -594,14 +711,20 @@ async function pollJob(jobId, apiName) {
     }
     if (res.status === 404) {
       els.genStatus.textContent = queued;
+      setProgress(Math.max(progressValue, 0.12), queued);
       continue;
     }
     if (!res.ok) {
       throw new Error(publicErrorText((data && data.error) || text || `Job HTTP ${res.status}`));
     }
-    if (data?.phase === "done") return data;
+    if (data?.phase === "done") {
+      setProgress(Math.max(progressValue, 0.9), "Runpod finished — loading video…");
+      return data;
+    }
     if (data?.phase === "error") throw new Error(publicErrorText(data.error || "Generate failed"));
-    els.genStatus.textContent = data?.phase === "running" ? running : queued;
+    const label = data?.phase === "running" ? running : queued;
+    els.genStatus.textContent = label;
+    setProgress(Math.max(progressValue, data?.phase === "running" ? 0.28 : 0.12), label);
   }
   throw new Error(
     extend
@@ -657,7 +780,8 @@ els.btnGen.addEventListener("click", async () => {
     if (USE_PROXY) {
       const data = await callSpace("/generate", { json: args, photo: photoFile, secondFace: secondFaceFile, target: workerSize(size) });
       rememberSession(data);
-      showResult(data.video || data.url);
+      await showResult(data.video || data.url);
+      finishProgress(statusText(data.status, "Done."));
       els.genStatus.textContent = statusText(data.status, "Done.");
     } else {
       const { Client } = await import("@gradio/client");
@@ -667,11 +791,13 @@ els.btnGen.addEventListener("click", async () => {
       const data = result?.data || result;
       const video = Array.isArray(data) ? data[0] : data;
       rememberSession(data);
-      showResult(video);
+      await showResult(video);
+      finishProgress(statusText(Array.isArray(data) ? data[2] : null, "Done."));
       els.genStatus.textContent = statusText(Array.isArray(data) ? data[2] : null, "Done.");
     }
   } catch (e) {
     console.error(e);
+    hideProgress();
     const hint = USE_PROXY
       ? ""
       : " If CORS blocked, set window.CONFIG.USE_PROXY = true and redeploy.";
@@ -691,7 +817,7 @@ async function extendOnce(auto) {
     const api = auto ? "/auto_extend" : "/extend";
     if (!sessionId) {
       throw new Error(
-        lastResultUrl && String(lastResultUrl).startsWith("/api/result")
+        lastResultFromRunpod
           ? "Extend uses the Hugging Face Space and cannot continue a Runpod clip."
           : "Missing session_id — generate first in this browser session."
       );
@@ -700,7 +826,8 @@ async function extendOnce(auto) {
     if (USE_PROXY) {
       const data = await callSpace(api, { json: args });
       rememberSession(data);
-      showResult(data.video || data.url);
+      await showResult(data.video || data.url);
+      finishProgress(statusText(data.status, "Extended."));
       els.genStatus.textContent = statusText(data.status, "Extended.");
     } else {
       const { Client } = await import("@gradio/client");
@@ -709,11 +836,13 @@ async function extendOnce(auto) {
       const data = result?.data || result;
       const video = Array.isArray(data) ? data[0] : data;
       rememberSession(data);
-      showResult(video);
+      await showResult(video);
+      finishProgress(statusText(Array.isArray(data) ? data[2] : null, "Extended."));
       els.genStatus.textContent = statusText(Array.isArray(data) ? data[2] : null, "Extended.");
     }
   } catch (e) {
     console.error(e);
+    hideProgress();
     els.genStatus.textContent = `Extend failed: ${publicErrorText(e)}`;
   } finally {
     clearBusy();
@@ -791,9 +920,11 @@ setInterval(refreshBalance, 30000);
 loadCatalog();
 
 const FACE_SWAP_EXTEND = "https://simzy-face-swap-extend-video.hf.space/?embed=true";
+const SPACE_TABS = new Set(["swapr", "faceswap", "extend", "mix"]);
 
 function showTab(name) {
-  const tabName = name === "faceswap" || name === "extend" ? name : "motions";
+  const raw = String(name || "").toLowerCase();
+  const tabName = SPACE_TABS.has(raw) ? (raw === "mix" ? "swapr" : raw) : "motions";
   document.querySelectorAll("[data-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.panel !== tabName;
   });

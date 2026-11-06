@@ -5,7 +5,7 @@
  */
 import { handleRunpodJobRequest } from "../server/runpodRoutes.js";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 export async function GET(request) {
   return handleRunpodJobRequest(request);
