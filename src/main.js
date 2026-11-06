@@ -284,21 +284,21 @@ function selectTemplate(id, opts = {}) {
   if (t.prompt) {
     els.prompt.value = t.prompt;
   } else {
-    els.prompt.value = "a person, natural motion, cinematic, high quality";
+    els.prompt.value = "a woman performing the action shown in the motion template, realistic human body, natural anatomy, correct body proportions, maintaining the exact motion and pose from the reference video, cinematic, high quality, photorealistic, detailed skin texture, natural lighting";
   }
 
   // Autofill negative prompt from template
   if (t.negative_prompt) {
     els.negativePrompt.value = t.negative_prompt;
   } else {
-    els.negativePrompt.value = "blurry, low quality, distorted face, deformed, bad anatomy, extra limbs, watermark, text, censored";
+    els.negativePrompt.value = "blurry, low quality, distorted, deformed, bad anatomy, extra limbs, missing limbs, merged fingers, extra fingers, mutated hands, body parts morphing into objects, object substitution, disfigured face, censored, pixelated, watermark, text, cartoon, 3d render, ai artifact, unnatural body, morphed body parts, fused bodies";
   }
   // Autofill extend negative prompt from template
   if (els.extendNegativePrompt) {
     if (t.negative_prompt) {
       els.extendNegativePrompt.value = t.negative_prompt;
     } else {
-      els.extendNegativePrompt.value = "blurry, low quality, distorted face, deformed, bad anatomy, extra limbs, watermark, text, censored";
+      els.extendNegativePrompt.value = "blurry, low quality, distorted, deformed, bad anatomy, extra limbs, missing limbs, merged fingers, extra fingers, mutated hands, body parts morphing into objects, object substitution, disfigured face, censored, pixelated, watermark, text, cartoon, 3d render, ai artifact, unnatural body, morphed body parts, fused bodies";
     }
   }
 
@@ -537,15 +537,15 @@ function generateArgs(size) {
   return {
     template_id: selectedId,
     video_url: selected ? videoUrl(selected) : "",
-    prompt: els.prompt.value.trim() || "a person, natural motion, cinematic, high quality",
+    prompt: els.prompt.value.trim() || "a woman performing the action shown in the motion template, realistic human body, natural anatomy, correct body proportions, maintaining the exact motion and pose from the reference video, cinematic, high quality, photorealistic, detailed skin texture, natural lighting",
     template_width: size ? size.width : undefined,
     template_height: size ? size.height : undefined,
     orientation: target.width > target.height ? "landscape" : target.width < target.height ? "portrait" : "square",
     max_seconds: 3,
     height: target.height,
     width: target.width,
-    steps: 6,
-    guidance: 1,
+    steps: 15,
+    guidance: 3,
     sample_shift: 5,
     negative: els.negativePrompt ? els.negativePrompt.value.trim() : "",
     seed: 42,

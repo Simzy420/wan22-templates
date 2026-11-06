@@ -19,14 +19,14 @@ export const TEMPLATE_CDN_BASE =
   "https://huggingface.co/datasets/Simzy/wan22-template-clips/resolve/main/";
 
 const RUNPOD_DEFAULTS = {
-  negative_prompt: "blurry, low quality, distorted",
+  negative_prompt: "blurry, low quality, distorted, deformed, bad anatomy, extra limbs, missing limbs, merged fingers, extra fingers, mutated hands, body parts morphing into objects, object substitution, disfigured face, censored, pixelated, watermark, text, cartoon, 3d render, ai artifact, unnatural body, morphed body parts, fused bodies",
   // Template clips are phone recordings (portrait). 832x480 landscape made the
   // worker's VHS_LoadVideo crop the motion clip, cutting the head in half.
   width: 480,
   height: 832,
   fps: 16,
-  cfg: 1,
-  steps: 6,
+  cfg: 3,
+  steps: 15,
   mode: "replace",
 };
 
@@ -236,7 +236,7 @@ export function buildRunpodInput(fields = {}) {
   return {
     image_base64: fields.image_base64,
     video_url: fields.video_url,
-    prompt: String(String(fields.prompt || "").trim() || "a person, natural motion, cinematic, high quality").slice(0, 2000),
+    prompt: String(String(fields.prompt || "").trim() || "a woman performing the action shown in the motion template, realistic human body, natural anatomy, correct body proportions, maintaining the exact motion and pose from the reference video, cinematic, high quality, photorealistic, detailed skin texture, natural lighting").slice(0, 2000),
     negative_prompt: (negative || RUNPOD_DEFAULTS.negative_prompt).slice(0, 1000),
     seed: normalizeSeed(fields.seed),
     ...targetSize(fields),
