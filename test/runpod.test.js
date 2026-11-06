@@ -4,17 +4,22 @@ import { handler as background } from "../netlify/functions/generate-background.
 import { handler as resultHandler } from "../netlify/functions/result.js";
 import { enqueueGenerateJob, memoryJobStore, publicJob, runBackgroundJob } from "../server/jobs.js";
 import { handleResultRequest } from "../server/resultVideo.js";
+import { serveVideoBytes } from "../server/resultVideo.js";
 import {
   buildRunpodInput,
   decodeVideoBase64,
+  describeRunpodJob,
   explainRunpodFailure,
   extractRunpodVideoBase64,
   isAllowedTemplateVideoUrl,
+  loadRunpodResultVideo,
   resolveMotionVideoUrl,
   runpodConfigured,
   runpodEndpoint,
+  shouldFailoverAccount,
   templateVideoFromCatalog,
 } from "../server/runpod.js";
+import { clearVideoCache, getCachedVideo } from "../server/videoCache.js";
 import { handleRunpodJobRequest, handleRunpodResultRequest } from "../server/runpodRoutes.js";
 
 const MOTION =
@@ -57,7 +62,7 @@ describe("Runpod Wan Animate client", () => {
       "https://api.runpod.ai/v2/abc"
     );
     assert.equal(runpodConfigured({ RUNPOD_API_KEY: "k" }), true);
-    assert.equal(runpodEndpoint({ RUNPOD_API_KEY: "k" }), "https://api.runpod.ai/v2/zrmwpir4qzs66s");
+    assert.equal(runpodEndpoint({ RUNPOD_API_KEY: "k" }), "https://api.runpod.ai/v2/3qu6rstqmkum81");
     assert.equal(runpodConfigured({ RUNPOD_ENDPOINT_ID: "zrmwpir4qzs66s" }), false);
     assert.equal(runpodEndpoint({}), "");
   });
@@ -110,11 +115,12 @@ describe("Runpod Wan Animate client", () => {
     assert.equal(input.width, 480);
     assert.equal(input.height, 832);
     assert.equal(input.fps, 16);
-    assert.equal(input.cfg, 1);
-    assert.equal(input.steps, 6);
+    assert.equal(input.cfg, 3);
+    assert.equal(input.steps, 15);
     assert.equal(input.mode, "replace");
     assert.equal(input.seed, 42);
-    assert.equal(input.negative_prompt, "blurry, low quality, distorted");
+    assert.match(input.negative_prompt, /blurry, low quality, distorted/);
+    assert.match(input.negative_prompt, /morphed body parts/);
     assert.equal(input.prompt, "a person");
   });
 
@@ -450,6 +456,7 @@ describe("Vercel Runpod job routes", () => {
   });
 
   it("streams the completed mp4 from /status without calling the Space", async () => {
+    clearVideoCache();
     const encoded = tinyMp4().toString("base64");
     const played = await handleRunpodResultRequest(
       new Request(`https://wan22-templates.vercel.app/api/result?id=${jobId}`),
@@ -465,6 +472,69 @@ describe("Vercel Runpod job routes", () => {
     assert.equal(played.headers.get("content-type"), "video/mp4");
     const bytes = Buffer.from(await played.arrayBuffer());
     assert.equal(bytes.subarray(4, 8).toString(), "ftyp");
+  });
+
+  it("caches the completed mp4 so Range follow-ups do not re-hit Runpod", async () => {
+    clearVideoCache();
+    const encoded = tinyMp4().toString("base64");
+    let statusCalls = 0;
+    const fetchImpl = async (url) => {
+      assert.match(url, /\/status\//);
+      statusCalls += 1;
+      return jsonRes({ id: jobId, status: "COMPLETED", output: { video: encoded } });
+    };
+    const job = await handleRunpodJobRequest(new Request(`https://wan22-templates.vercel.app/api/job?id=${jobId}`), {
+      env: ENV,
+      fetch: fetchImpl,
+    });
+    assert.equal(job.status, 200);
+    assert.equal((await job.json()).phase, "done");
+    assert.ok(getCachedVideo(jobId)?.bytes?.length);
+
+    const ranged = await handleRunpodResultRequest(
+      new Request(`https://wan22-templates.vercel.app/api/result?id=${jobId}`, {
+        headers: { Range: "bytes=0-7" },
+      }),
+      { env: ENV, fetch: fetchImpl }
+    );
+    assert.equal(ranged.status, 206);
+    assert.equal(statusCalls, 1);
+    assert.equal((await ranged.arrayBuffer()).byteLength, 8);
+  });
+});
+
+describe("result video size limits", () => {
+  it("serves the first chunk as 206 when the mp4 is larger than the Vercel cap", async () => {
+    const bytes = Buffer.alloc(5_000_000, 1);
+    bytes.writeUInt32BE(24, 0);
+    bytes.write("ftyp", 4);
+    bytes.write("isom", 8);
+    const res = serveVideoBytes(new Request("https://wan22-templates.vercel.app/api/result?id=x"), bytes);
+    assert.equal(res.status, 206);
+    assert.equal(res.headers.get("content-range"), "bytes 0-3999999/5000000");
+    assert.equal((await res.arrayBuffer()).byteLength, 4_000_000);
+  });
+
+  it("fails over to the second account when the first endpoint is missing", () => {
+    assert.equal(shouldFailoverAccount({ statusCode: 404, message: "endpoint not found" }), true);
+    assert.equal(shouldFailoverAccount({ statusCode: 401, message: "unauthorized" }), false);
+  });
+
+  it("describeRunpodJob stores the decoded clip for later /api/result reads", async () => {
+    clearVideoCache();
+    const encoded = tinyMp4().toString("base64");
+    const described = describeRunpodJob("cache-job-1", { status: "COMPLETED", output: { video: encoded } });
+    assert.equal(described.phase, "done");
+    const loaded = await loadRunpodResultVideo(
+      ENV,
+      "cache-job-1",
+      {
+        fetch: async () => {
+          throw new Error("should use cache");
+        },
+      }
+    );
+    assert.equal(loaded.bytes.subarray(4, 8).toString(), "ftyp");
   });
 });
 

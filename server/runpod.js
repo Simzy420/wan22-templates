@@ -13,6 +13,8 @@
  * With only account 1 configured, the job id is unchanged.
  */
 
+import { getCachedVideo, putCachedVideo } from "./videoCache.js";
+
 export const TEMPLATE_CATALOG_URL =
   "https://huggingface.co/datasets/Simzy/wan22-template-clips/resolve/main/templates/catalog.json";
 export const TEMPLATE_CDN_BASE =
@@ -34,7 +36,7 @@ const CREDIT_RE = /credit|insufficient|billing|payment required|out of funds|bal
 const AUTH_RE = /unauthorized|invalid api key|forbidden|api key/i;
 
 /** swapr-wan-animate. Used when the API key is set and RUNPOD_ENDPOINT_ID is empty. */
-export const DEFAULT_ANIMATE_ENDPOINT_ID = "zrmwpir4qzs66s";
+export const DEFAULT_ANIMATE_ENDPOINT_ID = "3qu6rstqmkum81";
 
 const MAX_STILL_BYTES = 2_000_000;
 
@@ -353,6 +355,15 @@ export function isCreditFailure(error) {
   return CREDIT_RE.test(String(error.message || ""));
 }
 
+/** Fail over to the other Runpod account on billing or missing-endpoint errors. */
+export function shouldFailoverAccount(error) {
+  if (isCreditFailure(error)) return true;
+  const code = error?.statusCode;
+  if (code === 404 || code === 410 || code === 502) return true;
+  const message = String(error?.message || "");
+  return /not found|unknown endpoint|does not exist|no such|could not reach runpod/i.test(message);
+}
+
 function statusError(message, statusCode) {
   const error = new Error(message);
   error.statusCode = statusCode;
@@ -379,7 +390,8 @@ export function describeRunpodJob(jobId, body) {
   const status = String(body?.status || "").toUpperCase();
   if (status === "COMPLETED") {
     const encoded = extractRunpodVideoBase64(body?.output ?? body);
-    if (!decodeVideoBase64(encoded)) {
+    const bytes = decodeVideoBase64(encoded);
+    if (!bytes) {
       return {
         job_id: jobId,
         phase: "error",
@@ -391,6 +403,9 @@ export function describeRunpodJob(jobId, body) {
         }),
       };
     }
+    // Cache while we already hold the decoded mp4 so /api/result Range
+    // requests do not re-download the huge Runpod /status payload.
+    putCachedVideo(jobId, bytes, videoContentType(bytes));
     const url = `/api/result?id=${encodeURIComponent(jobId)}`;
     return {
       job_id: jobId,
@@ -534,7 +549,7 @@ export async function startRunpodJob(env, input, deps = {}) {
   try {
     return await postRun(ranked[0], input, deps, true);
   } catch (error) {
-    if (!isCreditFailure(error) || ranked.length < 2) throw error;
+    if (!shouldFailoverAccount(error) || ranked.length < 2) throw error;
     return postRun(ranked[1], input, deps, true);
   }
 }
@@ -594,6 +609,8 @@ export async function submitGenerateOnRunpod({ payload, photo, env, fetch: fetch
 }
 
 export async function loadRunpodResultVideo(env, jobId, deps = {}) {
+  const cached = getCachedVideo(jobId);
+  if (cached?.bytes?.length) return cached;
   const polled = await fetchRunpodJob(env, jobId, deps);
   const described = describeRunpodJob(jobId, polled.body);
   if (described.phase !== "done") {
@@ -601,11 +618,14 @@ export async function loadRunpodResultVideo(env, jobId, deps = {}) {
     error.statusCode = described.phase === "error" ? 502 : 404;
     throw error;
   }
+  const again = getCachedVideo(jobId);
+  if (again?.bytes?.length) return again;
   const encoded = extractRunpodVideoBase64(polled.body?.output ?? polled.body);
   const bytes = decodeVideoBase64(encoded);
   if (!bytes) {
     throw statusError("Runpod finished without a video.", 502);
   }
+  putCachedVideo(jobId, bytes, videoContentType(bytes));
   return { bytes, contentType: videoContentType(bytes) };
 }
 

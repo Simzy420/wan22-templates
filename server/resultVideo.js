@@ -115,10 +115,12 @@ export function serveVideoBytes(request, bytes, contentType = "video/mp4") {
     start = parsed.start;
     end = parsed.end;
   } else if (total > MAX_CHUNK) {
-    return jsonResponse(
-      { error: "The result video is too large to send in one response. Try Generate again." },
-      502
-    );
+    // Vercel caps function responses near 4.5MB. Returning JSON 502 here made
+    // <video> probes (no Range) look like "Done" with an empty player. Serve
+    // the first chunk as 206 so the client continues with Range requests.
+    status = 206;
+    start = 0;
+    end = Math.min(total - 1, MAX_CHUNK - 1);
   }
 
   const slice = bytes.subarray(start, end + 1);

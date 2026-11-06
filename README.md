@@ -84,8 +84,9 @@ commit them. They are not copied from Netlify.
 | Name | Required | Purpose |
 |------|----------|---------|
 | `RUNPOD_API_KEY` | Yes for Generate | Server-side only. `Authorization: Bearer` on `/run` and `/status`. Sensitive. Never put this in the frontend or in git. Copy the value from the Netlify **swapr-casey** site. |
-| `RUNPOD_ENDPOINT_ID` | Yes for Generate | `zrmwpir4qzs66s` (`swapr-wan-animate`). If the key is set and this is empty, the server uses this id. |
-| `RUNPOD_ENDPOINT_URL` | No | `https://api.runpod.ai/v2/zrmwpir4qzs66s`. Other hosts are ignored. |
+| `RUNPOD_ENDPOINT_ID` | Yes for Generate | Live `swapr-wan-animate` id (currently `3qu6rstqmkum81`). If the key is set and this is empty, the server defaults to that id. |
+| `RUNPOD_ENDPOINT_URL` | No | `https://api.runpod.ai/v2/<endpoint-id>`. Other hosts are ignored. |
+| `RUNPOD_API_KEY_2` / `RUNPOD_ENDPOINT_ID_2` | No | Optional second Runpod account. Generate prefers the higher balance and fails over on credits or missing endpoint. |
 | `HF_GENERATE_FALLBACK` | No | `true` sends Generate to the Space only when `RUNPOD_API_KEY` is absent. Leave unset. |
 | `HF_SPACE_URL` | No | Space used for Extend. Default `https://simzy-wan-2-2-templates.hf.space` |
 | `HF_TOKEN` | No | Hugging Face token, read only on the server. Used for Extend and `/api/video`, not the Runpod Generate path. |

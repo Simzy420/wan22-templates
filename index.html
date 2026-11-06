@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0b0b0f" />
     <title>Become the Character</title>
-    <link rel="stylesheet" href="/src/styles.css?v=20261106-dual-runpod" />
-    <script src="/config.js?v=20261106-dual-runpod"></script>
+    <link rel="stylesheet" href="/src/styles.css?v=20261106-motions-swapr" />
+    <script src="/config.js?v=20261106-motions-swapr"></script>
   </head>
   <body>
     <div id="app">
@@ -18,6 +18,7 @@
         </button>
         <nav class="tabs" role="tablist" aria-label="App sections">
           <button type="button" class="tab is-on" data-tab="motions" role="tab" aria-selected="true">Motions</button>
+          <button type="button" class="tab" data-tab="swapr" role="tab" aria-selected="false">Swapr Mix</button>
           <button type="button" class="tab" data-tab="faceswap" role="tab" aria-selected="false">Face Swap</button>
           <button type="button" class="tab" data-tab="extend" role="tab" aria-selected="false">Extend</button>
         </nav>
@@ -86,11 +87,17 @@
       <section class="section actions">
         <button type="button" id="btn-generate" class="primary" disabled>Generate</button>
         <p class="muted">The first Generate may take several minutes while the Runpod worker starts. Later runs are faster. Leave this tab open after you tap Generate.</p>
+        <div id="gen-progress" class="gen-progress" hidden>
+          <div class="gen-progress-track" aria-hidden="true">
+            <div id="gen-progress-bar" class="gen-progress-bar"></div>
+          </div>
+          <p id="gen-progress-label" class="gen-progress-label muted"></p>
+        </div>
         <p id="gen-status" class="muted" aria-live="polite"></p>
       </section>
 
       <section class="section runpod-box">
-        <p id="runpod-balance" class="muted" data-version="20261106-dual-runpod" aria-live="polite">Runpod balance…</p>
+        <p id="runpod-balance" class="muted" data-version="20261106-motions-swapr" aria-live="polite">Runpod balance…</p>
         <button type="button" id="btn-stop-gpu" class="secondary">Stop GPU</button>
         <p id="stop-status" class="muted" aria-live="polite"></p>
       </section>
@@ -127,15 +134,30 @@
       </footer>
       </div>
 
+      <section class="section" id="panel-swapr" data-panel="swapr" hidden>
+        <h2>Swapr Mix</h2>
+        <p class="muted">Face swap + Wan video in one flow (default: Run both steps). Progress advances while Runpod works — leave this tab open.</p>
+        <p class="space-open-row">
+          <a class="secondary space-open" href="https://simzy-face-swap-extend-video.hf.space/" target="_blank" rel="noopener">Open full screen</a>
+        </p>
+        <iframe class="space-frame space-frame-tall" title="Swapr Mix" data-src="https://simzy-face-swap-extend-video.hf.space/?embed=true" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>
+      </section>
+
       <section class="section" id="panel-faceswap" data-panel="faceswap" hidden>
         <h2>Face Swap</h2>
         <p class="muted">Left face replaces the person on the left. Right face replaces the person on the right. The middle upload is the scene, or use a short video clip. Unlock the Space first.</p>
+        <p class="space-open-row">
+          <a class="secondary space-open" href="https://simzy-face-swap-extend-video.hf.space/" target="_blank" rel="noopener">Open full screen</a>
+        </p>
         <iframe class="space-frame" title="Face Swap" data-src="https://simzy-face-swap-extend-video.hf.space/?embed=true" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>
       </section>
 
       <section class="section" id="panel-extend" data-panel="extend" hidden>
         <h2>Extend</h2>
         <p class="muted">Extend a still or a swapped picture into a longer clip in the same Space. Choose Extend, or run both steps.</p>
+        <p class="space-open-row">
+          <a class="secondary space-open" href="https://simzy-face-swap-extend-video.hf.space/" target="_blank" rel="noopener">Open full screen</a>
+        </p>
         <iframe class="space-frame" title="Extend" data-src="https://simzy-face-swap-extend-video.hf.space/?embed=true" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>
       </section>
     </div>
@@ -179,6 +201,6 @@
       <p class="muted">Clips already in the dataset use the Mixkit Stock Video Free License, except <code>demo-victory</code>, which is from Wan-Video/Wan-Animate-2 <code>examples/demo1/template.mp4</code> (Apache-2.0).</p>
     </dialog>
 
-    <script type="module" src="/src/main.js?v=20261106-dual-runpod"></script>
+    <script type="module" src="/src/main.js?v=20261106-motions-swapr"></script>
   </body>
 </html>
