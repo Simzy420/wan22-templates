@@ -4,6 +4,7 @@
  * same-origin /api/generate when USE_PROXY is true (required on iPhone).
  * Result video URLs on the Space host are rewritten to /api/video.
  */
+import { balanceRows } from "./balanceView.js";
 import { generateFailureText, publicErrorText } from "../server/gatewayError.js";
 import { rewriteSpaceVideoUrl } from "../server/videoUrl.js";
 
@@ -722,15 +723,43 @@ async function extendOnce(auto) {
 els.btnExtend.addEventListener("click", () => extendOnce(false));
 els.btnAuto.addEventListener("click", () => extendOnce(true));
 
+function renderBalance(rows) {
+  els.balance.replaceChildren();
+  for (const row of rows) {
+    const line = document.createElement("span");
+    line.className = row.low ? "balance-line is-low" : "balance-line";
+    const amount = document.createElement("span");
+    amount.className = "balance-amount";
+    if (row.low) {
+      const flag = document.createElement("span");
+      flag.className = "balance-flag";
+      flag.textContent = "Low";
+      amount.append(flag, document.createTextNode(` ${row.text}`));
+    } else {
+      amount.textContent = row.text;
+    }
+    const link = document.createElement("a");
+    link.className = "balance-buy";
+    link.href = row.href;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = "Buy credit";
+    line.append(amount, link);
+    els.balance.append(line);
+  }
+}
+
 async function refreshBalance() {
   if (!els.balance) return;
   try {
     const res = await fetch("/api/balance", { cache: "no-store" });
     const data = await res.json();
-    if (!res.ok || typeof data.balance !== "number") throw new Error(data.error || `HTTP ${res.status}`);
-    const spend = typeof data.spendPerHour === "number" ? ` · $${data.spendPerHour.toFixed(3)}/hr` : "";
-    els.balance.textContent = `Runpod balance $${data.balance.toFixed(2)}${spend}`;
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const rows = balanceRows(data);
+    if (!rows.length) throw new Error(data.error || "no balance");
+    renderBalance(rows);
   } catch (e) {
+    els.balance.replaceChildren();
     els.balance.textContent = `Runpod balance unavailable (${e.message})`;
   }
 }

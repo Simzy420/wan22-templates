@@ -333,6 +333,72 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   line-height: 1.4;
 }
 
+.runpod-box {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.85rem 0.85rem 1rem;
+}
+#runpod-balance {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0 0 0.75rem;
+}
+.balance-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-height: 44px;
+  padding: 0.15rem 0.15rem 0.15rem 0.35rem;
+  border-radius: 12px;
+}
+.balance-amount {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.35;
+}
+.balance-buy {
+  flex: 0 0 auto;
+  color: #d7c6ff;
+  font-weight: 750;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+  min-height: 44px;
+  padding: 0.35rem 0.15rem 0.35rem 0.35rem;
+  display: inline-flex;
+  align-items: center;
+}
+.balance-line.is-low {
+  color: #ff4d5e;
+  font-weight: 750;
+  background: rgba(255, 77, 94, 0.14);
+  border: 1px solid #ff4d5e;
+  padding-left: 0.55rem;
+}
+.balance-line.is-low .balance-buy {
+  color: #ffb3bb;
+}
+.balance-flag {
+  display: inline-block;
+  margin-right: 0.35rem;
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
+  background: #ff4d5e;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: 0.08em;
+}
+#btn-stop-gpu {
+  width: 100%;
+  min-height: 48px;
+}
+
 dialog.howto {
   width: min(460px, calc(100vw - 1.25rem));
   max-height: min(86vh, 760px);

@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import { handleGenerateRequest } from "./server/gradioProxy.js";
+import { handleBalanceRequest, handleStopRequest } from "./server/runpodAdmin.js";
 import { handleRunpodJobRequest, handleRunpodResultRequest } from "./server/runpodRoutes.js";
 import { handleVideoRequest } from "./server/videoProxy.js";
 
@@ -28,6 +29,8 @@ function apiDev() {
           "/api/video": handleVideoRequest,
           "/api/job": handleRunpodJobRequest,
           "/api/result": handleRunpodResultRequest,
+          "/api/balance": handleBalanceRequest,
+          "/api/stop": handleStopRequest,
         };
         const handle = handlers[path];
         if (!handle) return next();
