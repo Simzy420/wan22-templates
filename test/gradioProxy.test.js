@@ -555,12 +555,16 @@ describe("phone UI wiring", () => {
     assert.match(space, /template clip unchanged/);
     assert.match(space, /cover_resize\(pil, frame_w, frame_h\)/);
     assert.equal(vercel.functions["api/generate.js"].maxDuration, 300);
-    assert.equal(vercel.functions["api/job.js"].maxDuration, 30);
-    assert.equal(vercel.functions["api/result.js"].maxDuration, 60);
+    assert.equal(vercel.functions["api/job.js"].maxDuration, 60);
+    assert.equal(vercel.functions["api/result.js"].maxDuration, 120);
     assert.equal(vercel.functions["api/video.js"].maxDuration, 60);
     assert.match(main, /generateFailureText/);
+    assert.match(main, /startProgressPump/);
+    assert.match(main, /fetchResultBlob/);
     assert.match(vercel.functions["api/generate.js"].includeFiles, /@gradio\/client\/dist/);
     assert.equal(vercel.outputDirectory, "dist");
     assert.equal(vercel.framework, "vite");
+    assert.match(page, /data-tab="swapr"/);
+    assert.match(page, /id="gen-progress"/);
   });
 });

@@ -169,8 +169,32 @@ describe("two Runpod accounts", () => {
     assert.equal(started.id, "a1_job-fallback");
   });
 
-  it("does not retry a non-credit failure, and surfaces credits when both accounts refuse", async () => {
+  it("retries when the preferred endpoint is missing, but not on auth failures", async () => {
     let runs = 0;
+    const started = await startRunpodJob(
+      DUAL,
+      { prompt: "a person" },
+      {
+        balanceCache: new Map(),
+        fetch: async (url, init) => {
+          if (String(url).includes("graphql")) {
+            const balance = authOf(init).endsWith("key-2") ? 9 : 0.2;
+            return jsonRes({ data: { myself: { clientBalance: balance, currentSpendPerHr: 0 } } });
+          }
+          runs += 1;
+          if (runs === 1) {
+            assert.match(url, /3qu6rstqmkum81\/run$/);
+            return jsonRes({ error: "endpoint not found" }, 404);
+          }
+          assert.match(url, /zrmwpir4qzs66s\/run$/);
+          return jsonRes({ id: "job-missing-ep", status: "IN_QUEUE" });
+        },
+      }
+    );
+    assert.equal(runs, 2);
+    assert.equal(started.id, "a1_job-missing-ep");
+
+    runs = 0;
     await assert.rejects(
       () =>
         startRunpodJob(
@@ -520,9 +544,9 @@ describe("balance block", () => {
     assert.match(main, /is-low/);
     assert.match(css, /\.balance-line\.is-low/);
     assert.match(css, /#ff4d5e/);
-    assert.match(page, /20261106-dual-runpod/);
-    assert.match(page, /config\.js\?v=20261106-dual-runpod/);
-    assert.match(config, /ASSET_VERSION:\s*"20261106-dual-runpod"/);
+    assert.match(page, /20261106-motions-swapr/);
+    assert.match(page, /config\.js\?v=20261106-motions-swapr/);
+    assert.match(config, /ASSET_VERSION:\s*"20261106-motions-swapr"/);
     assert.equal(RUNPOD_BILLING_URL, "https://console.runpod.io/user/billing");
   });
 });
