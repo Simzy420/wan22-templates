@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0b0b0f" />
     <title>Become the Character</title>
-    <link rel="stylesheet" href="/src/styles.css?v=20261106-motions-swapr" />
-    <script src="/config.js?v=20261106-motions-swapr"></script>
+    <link rel="stylesheet" href="/src/styles.css?v=20261113-video2images" />
+    <script src="/config.js?v=20261113-video2images"></script>
   </head>
   <body>
     <div id="app">
@@ -21,6 +21,7 @@
           <button type="button" class="tab" data-tab="swapr" role="tab" aria-selected="false">Swapr Mix</button>
           <button type="button" class="tab" data-tab="faceswap" role="tab" aria-selected="false">Face Swap</button>
           <button type="button" class="tab" data-tab="extend" role="tab" aria-selected="false">Extend</button>
+          <button type="button" class="tab" data-tab="video2images" role="tab" aria-selected="false">Video2Images</button>
         </nav>
       </header>
 
@@ -97,7 +98,7 @@
       </section>
 
       <section class="section runpod-box">
-        <p id="runpod-balance" class="muted" data-version="20261106-motions-swapr" aria-live="polite">Runpod balance…</p>
+        <p id="runpod-balance" class="runpod-balance" data-version="20261113-video2images" aria-live="polite">Runpod balance…</p>
         <button type="button" id="btn-stop-gpu" class="secondary">Stop GPU</button>
         <p id="stop-status" class="muted" aria-live="polite"></p>
       </section>
@@ -140,7 +141,10 @@
         <p class="space-open-row">
           <a class="secondary space-open" href="https://simzy-face-swap-extend-video.hf.space/" target="_blank" rel="noopener">Open full screen</a>
         </p>
-        <iframe class="space-frame space-frame-tall" title="Swapr Mix" data-src="https://simzy-face-swap-extend-video.hf.space/?embed=true" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>
+        <div class="iframe-wrap">
+          <iframe class="space-frame space-frame-tall" title="Swapr Mix" src="https://simzy-face-swap-extend-video.hf.space/?embed=true" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>
+          <div class="iframe-loader" data-for="swapr">Loading Swapr Mix…</div>
+        </div>
       </section>
 
       <section class="section" id="panel-faceswap" data-panel="faceswap" hidden>
@@ -149,7 +153,10 @@
         <p class="space-open-row">
           <a class="secondary space-open" href="https://simzy-face-swap-extend-video.hf.space/" target="_blank" rel="noopener">Open full screen</a>
         </p>
-        <iframe class="space-frame" title="Face Swap" data-src="https://simzy-face-swap-extend-video.hf.space/?embed=true" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>
+        <div class="iframe-wrap">
+          <iframe class="space-frame" title="Face Swap" src="https://simzy-face-swap-extend-video.hf.space/?embed=true" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>
+          <div class="iframe-loader" data-for="faceswap">Loading Face Swap…</div>
+        </div>
       </section>
 
       <section class="section" id="panel-extend" data-panel="extend" hidden>
@@ -158,7 +165,22 @@
         <p class="space-open-row">
           <a class="secondary space-open" href="https://simzy-face-swap-extend-video.hf.space/" target="_blank" rel="noopener">Open full screen</a>
         </p>
-        <iframe class="space-frame" title="Extend" data-src="https://simzy-face-swap-extend-video.hf.space/?embed=true" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>
+        <div class="iframe-wrap">
+          <iframe class="space-frame" title="Extend" src="https://simzy-face-swap-extend-video.hf.space/?embed=true" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>
+          <div class="iframe-loader" data-for="extend">Loading Extend…</div>
+        </div>
+      </section>
+
+      <section class="section" id="panel-video2images" data-panel="video2images" hidden>
+        <h2>Video2Images</h2>
+        <p class="muted">Upload a still picture and enter a short prompt describing the motion you want. The app turns the image into a short video and lets you add more segments by extending.</p>
+        <p class="space-open-row">
+          <a class="secondary space-open" href="https://simzy-wan22-extend-runpod.hf.space/" target="_blank" rel="noopener">Open full screen</a>
+        </p>
+        <div class="iframe-wrap">
+          <iframe class="space-frame space-frame-tall" title="Video2Images" src="https://simzy-wan22-extend-runpod.hf.space/?embed=true" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>
+          <div class="iframe-loader" data-for="video2images">Loading Video2Images…</div>
+        </div>
       </section>
     </div>
 
@@ -179,10 +201,13 @@
         <li>If Generate says Runpod is out of credits, add credits on the Runpod account and try once. If the worker was idle, wait for it to finish starting instead of tapping Generate again.</li>
       </ol>
 
+      <h3>All tabs keep running</h3>
+      <p>All tabs load at startup. You can start a generation on one tab, switch to another tab, and the first one keeps running. Come back later to see the result.</p>
+
       <h3>Create a new template</h3>
       <p>A template is <strong>one short real person-motion driving clip</strong>. This is not a LoRA trainer and does not take a folder of training videos.</p>
       <ol>
-        <li><strong>Length:</strong> about <strong>3–5 seconds</strong>. Today’s clips (<code>demo-wave</code>, <code>demo-dance</code>, <code>demo-victory</code>, <code>demo-walk</code>) are <strong>4.0s</strong>. Generate sends that public motion clip to Runpod with your still.</li>
+        <li><strong>Length:</strong> about <strong>3–5 seconds</strong>. Today's clips (<code>demo-wave</code>, <code>demo-dance</code>, <code>demo-victory</code>, <code>demo-walk</code>) are <strong>4.0s</strong>. Generate sends that public motion clip to Runpod with your still.</li>
         <li><strong>Picture:</strong> one person, motion that reads clearly (wave, dance, walk, gesture). MP4, H.264. Prefer a stable camera and a readable face or full body.</li>
         <li><strong>Id:</strong> lowercase, hyphens, stable once published, for example <code>demo-wave</code>. Do not reuse an existing id unless you mean to replace that motion.</li>
         <li>
@@ -201,6 +226,6 @@
       <p class="muted">Clips already in the dataset use the Mixkit Stock Video Free License, except <code>demo-victory</code>, which is from Wan-Video/Wan-Animate-2 <code>examples/demo1/template.mp4</code> (Apache-2.0).</p>
     </dialog>
 
-    <script type="module" src="/src/main.js?v=20261106-motions-swapr"></script>
+    <script type="module" src="/src/main.js?v=20261113-video2images"></script>
   </body>
 </html>

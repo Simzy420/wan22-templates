@@ -889,7 +889,12 @@ async function refreshBalance() {
     renderBalance(rows);
   } catch (e) {
     els.balance.replaceChildren();
-    els.balance.textContent = `Runpod balance unavailable (${e.message})`;
+    const err = document.createElement("span");
+    err.style.color = "#ff4d5e";
+    err.style.fontSize = "1.1rem";
+    err.style.fontWeight = "700";
+    err.textContent = `Runpod balance unavailable (${e.message})`;
+    els.balance.append(err);
   }
 }
 
@@ -920,7 +925,52 @@ setInterval(refreshBalance, 30000);
 loadCatalog();
 
 const FACE_SWAP_EXTEND = "https://simzy-face-swap-extend-video.hf.space/?embed=true";
-const SPACE_TABS = new Set(["swapr", "faceswap", "extend", "mix"]);
+const SPACE_TABS = new Set(["swapr", "faceswap", "extend", "video2images", "mix"]);
+
+/** Hide the loader + progress bar for an iframe once it finishes loading. */
+function setupIframeLoaders() {
+  document.querySelectorAll(".iframe-wrap").forEach((wrap) => {
+    const frame = wrap.querySelector("iframe");
+    const loader = wrap.querySelector(".iframe-loader");
+    const progBar = wrap.querySelector(".iframe-progress-bar");
+    // Add a progress bar element if not present
+    let prog = wrap.querySelector(".iframe-progress");
+    if (!prog) {
+      prog = document.createElement("div");
+      prog.className = "iframe-progress";
+      const inner = document.createElement("div");
+      inner.className = "iframe-progress-bar";
+      prog.appendChild(inner);
+      wrap.appendChild(prog);
+    }
+    const innerBar = prog.querySelector(".iframe-progress-bar");
+    // Animate the bar toward ~90% while loading
+    let loadTimer = null;
+    let pct = 0.05;
+    if (frame && !frame.getAttribute("data-loaded")) {
+      loadTimer = setInterval(() => {
+        pct = Math.min(0.9, pct + 0.03);
+        if (innerBar) innerBar.style.width = `${Math.round(pct * 100)}%`;
+      }, 600);
+    }
+    const done = () => {
+      if (loadTimer) clearInterval(loadTimer);
+      if (innerBar) innerBar.style.width = "100%";
+      if (loader) loader.classList.add("is-hidden");
+      setTimeout(() => {
+        if (prog) prog.classList.add("is-hidden");
+      }, 400);
+      if (frame) frame.setAttribute("data-loaded", "1");
+    };
+    if (frame) {
+      frame.addEventListener("load", done);
+      // If already loaded (cached), hide immediately
+      try {
+        if (frame.contentDocument && frame.contentDocument.readyState === "complete") done();
+      } catch { /* cross-origin — wait for load event */ }
+    }
+  });
+}
 
 function showTab(name) {
   const raw = String(name || "").toLowerCase();
@@ -933,9 +983,8 @@ function showTab(name) {
     tab.classList.toggle("is-on", on);
     tab.setAttribute("aria-selected", on ? "true" : "false");
   });
-  const panel = document.querySelector(`[data-panel="${tabName}"]`);
-  const frame = panel?.querySelector("iframe");
-  if (frame && !frame.getAttribute("src")) frame.src = frame.dataset.src || FACE_SWAP_EXTEND;
+  // All iframes load immediately on page load (src is set in HTML).
+  // No lazy loading — tabs keep running in background when you switch away.
   if (tabName === "motions") syncPlayback();
   const next = `#${tabName}`;
   if (location.hash !== next) history.replaceState(null, "", next);
@@ -944,4 +993,7 @@ function showTab(name) {
 document.querySelectorAll("[data-tab]").forEach((tab) => {
   tab.addEventListener("click", () => showTab(tab.dataset.tab));
 });
+
+// Load all iframes immediately and set up loading indicators
+setupIframeLoaders();
 showTab(location.hash.replace("#", ""));
