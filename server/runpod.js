@@ -21,7 +21,7 @@ export const TEMPLATE_CDN_BASE =
   "https://huggingface.co/datasets/Simzy/wan22-template-clips/resolve/main/";
 
 const RUNPOD_DEFAULTS = {
-  negative_prompt: "blurry, low quality, distorted, deformed, bad anatomy, extra limbs, missing limbs, merged fingers, extra fingers, mutated hands, body parts morphing into objects, object substitution, disfigured face, censored, pixelated, watermark, text, cartoon, 3d render, ai artifact, unnatural body, morphed body parts, fused bodies",
+  negative_prompt: "blurry, low quality, distorted face, deformed, bad anatomy, extra limbs, missing limbs, merged fingers, extra fingers, mutated hands, body parts morphing into objects, object substitution, body parts turning into objects, disfigured face, unnatural body, morphed body parts, fused bodies, hybrid body parts, censored, pixelated, watermark, text, cartoon, 3d render, ai artifact, plastic skin, doll-like, smooth skin, airbrushed",
   // Template clips are phone recordings (portrait). 832x480 landscape made the
   // worker's VHS_LoadVideo crop the motion clip, cutting the head in half.
   width: 480,
@@ -238,7 +238,7 @@ export function buildRunpodInput(fields = {}) {
   return {
     image_base64: fields.image_base64,
     video_url: fields.video_url,
-    prompt: String(String(fields.prompt || "").trim() || "a woman performing the action shown in the motion template, realistic human body, natural anatomy, correct body proportions, maintaining the exact motion and pose from the reference video, cinematic, high quality, photorealistic, detailed skin texture, natural lighting").slice(0, 2000),
+    prompt: String(String(fields.prompt || "").trim() || "a person with natural skin texture and realistic anatomy, their face and body matching the reference photo, replicating the exact motion and pose from the reference video, maintaining consistent identity, cinematic, high quality, photorealistic, detailed skin texture, natural lighting").slice(0, 2000),
     negative_prompt: (negative || RUNPOD_DEFAULTS.negative_prompt).slice(0, 1000),
     seed: normalizeSeed(fields.seed),
     ...targetSize(fields),

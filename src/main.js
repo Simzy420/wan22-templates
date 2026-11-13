@@ -294,21 +294,21 @@ function selectTemplate(id, opts = {}) {
   if (t.prompt) {
     els.prompt.value = t.prompt;
   } else {
-    els.prompt.value = "a woman performing the action shown in the motion template, realistic human body, natural anatomy, correct body proportions, maintaining the exact motion and pose from the reference video, cinematic, high quality, photorealistic, detailed skin texture, natural lighting";
+    els.prompt.value = "a person with natural skin texture and realistic anatomy, their face and body matching the reference photo, replicating the exact motion and pose from the reference video, maintaining consistent identity, cinematic, high quality, photorealistic, detailed skin texture, natural lighting";
   }
 
   // Autofill negative prompt from template
   if (t.negative_prompt) {
     els.negativePrompt.value = t.negative_prompt;
   } else {
-    els.negativePrompt.value = "blurry, low quality, distorted, deformed, bad anatomy, extra limbs, missing limbs, merged fingers, extra fingers, mutated hands, body parts morphing into objects, object substitution, disfigured face, censored, pixelated, watermark, text, cartoon, 3d render, ai artifact, unnatural body, morphed body parts, fused bodies";
+    els.negativePrompt.value = "blurry, low quality, distorted face, deformed, bad anatomy, extra limbs, missing limbs, merged fingers, extra fingers, mutated hands, body parts morphing into objects, object substitution, body parts turning into objects, disfigured face, unnatural body, morphed body parts, fused bodies, hybrid body parts, censored, pixelated, watermark, text, cartoon, 3d render, ai artifact, plastic skin, doll-like, smooth skin, airbrushed";
   }
   // Autofill extend negative prompt from template
   if (els.extendNegativePrompt) {
     if (t.negative_prompt) {
       els.extendNegativePrompt.value = t.negative_prompt;
     } else {
-      els.extendNegativePrompt.value = "blurry, low quality, distorted, deformed, bad anatomy, extra limbs, missing limbs, merged fingers, extra fingers, mutated hands, body parts morphing into objects, object substitution, disfigured face, censored, pixelated, watermark, text, cartoon, 3d render, ai artifact, unnatural body, morphed body parts, fused bodies";
+      els.extendNegativePrompt.value = "blurry, low quality, distorted face, deformed, bad anatomy, extra limbs, missing limbs, merged fingers, extra fingers, mutated hands, body parts morphing into objects, object substitution, body parts turning into objects, disfigured face, unnatural body, morphed body parts, fused bodies, hybrid body parts, censored, pixelated, watermark, text, cartoon, 3d render, ai artifact, plastic skin, doll-like, smooth skin, airbrushed";
     }
   }
 
@@ -654,7 +654,7 @@ function generateArgs(size) {
   return {
     template_id: selectedId,
     video_url: selected ? videoUrl(selected) : "",
-    prompt: els.prompt.value.trim() || "a woman performing the action shown in the motion template, realistic human body, natural anatomy, correct body proportions, maintaining the exact motion and pose from the reference video, cinematic, high quality, photorealistic, detailed skin texture, natural lighting",
+    prompt: els.prompt.value.trim() || "a person with natural skin texture and realistic anatomy, their face and body matching the reference photo, replicating the exact motion and pose from the reference video, maintaining consistent identity, cinematic, high quality, photorealistic, detailed skin texture, natural lighting",
     template_width: size ? size.width : undefined,
     template_height: size ? size.height : undefined,
     orientation: target.width > target.height ? "landscape" : target.width < target.height ? "portrait" : "square",
