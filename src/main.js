@@ -617,7 +617,7 @@ async function photoForUpload(file, target) {
   try {
     const bitmap = await createImageBitmap(file);
     const aspect = target ? target.width / target.height : bitmap.width / bitmap.height;
-    const maxEdge = 1280;
+    const maxEdge = 1024;
     let cw;
     let ch;
     if (bitmap.width / bitmap.height > aspect) {
@@ -640,7 +640,7 @@ async function photoForUpload(file, target) {
     const dh = Math.round(bitmap.height * scale);
     ctx.drawImage(bitmap, Math.round((width - dw) / 2), Math.round((height - dh) / 2), dw, dh);
     if (typeof bitmap.close === "function") bitmap.close();
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.8));
     if (!blob) return file;
     return new File([blob], "photo.jpg", { type: "image/jpeg" });
   } catch {

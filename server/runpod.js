@@ -38,7 +38,7 @@ const AUTH_RE = /unauthorized|invalid api key|forbidden|api key/i;
 /** swapr-wan-animate. Used when the API key is set and RUNPOD_ENDPOINT_ID is empty. */
 export const DEFAULT_ANIMATE_ENDPOINT_ID = "3qu6rstqmkum81";
 
-const MAX_STILL_BYTES = 2_000_000;
+const MAX_STILL_BYTES = 6_000_000;
 
 export function hfGenerateEnabled(env = {}) {
   const flag = String(env.HF_GENERATE_FALLBACK || "").trim().toLowerCase();
